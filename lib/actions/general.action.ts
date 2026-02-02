@@ -10,50 +10,53 @@ export async function createFeedback(params: CreateFeedbackParams) {
   const { interviewId, userId, transcript, feedbackId } = params;
 
   try {
+    if (!transcript || transcript.length < 3) {
+      return { success: false, error: "Interview too short for analysis" };
+    }
+    const interview = await getInterviewById(interviewId);
+
+    // 1. Get analysis from ML Service via API Route
+    const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/feedback/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        transcript,
+        difficulty: interview?.level || "Medium",
+        role: interview?.role || "Software Engineer"
+      }),
+    });
+
+    const analysis = await response.json();
+
+    // 2. Supplement with Gemini assessment (optional but good for consistency)
     const formattedTranscript = transcript
-      .map(
-        (sentence: { role: string; content: string }) =>
-          `- ${sentence.role}: ${sentence.content}\n`
-      )
+      .map((sentence) => `- ${sentence.role}: ${sentence.content}\n`)
       .join("");
 
-    const { object } = await generateObject({
-      model: google("gemini-2.0-flash-001"),
+    const { object: geminiFeedback } = await generateObject({
+      model: google("gemini-2.0-flash"),
       schema: feedbackSchema,
-      prompt: `
-        You are an AI interviewer analyzing a mock interview. Your task is to evaluate the candidate based on structured categories. Be thorough and detailed in your analysis. Don't be lenient with the candidate. If there are mistakes or areas for improvement, point them out.
-        Transcript:
-        ${formattedTranscript}
-
-        Please score the candidate from 0 to 100 in the following areas. Do not add categories other than the ones provided:
-        - **Communication Skills**: Clarity, articulation, structured responses.
-        - **Technical Knowledge**: Understanding of key concepts for the role.
-        - **Problem-Solving**: Ability to analyze problems and propose solutions.
-        - **Cultural & Role Fit**: Alignment with company values and job role.
-        - **Confidence & Clarity**: Confidence in responses, engagement, and clarity.
-        `,
-      system:
-        "You are a professional interviewer analyzing a mock interview. Your task is to evaluate the candidate based on structured categories",
+      prompt: `Analyze this interview transcript and provide category scores.
+      Transcript: ${formattedTranscript}`,
     });
 
     const feedback = {
-      interviewId: interviewId,
-      userId: userId,
-      totalScore: object.totalScore,
-      categoryScores: object.categoryScores,
-      strengths: object.strengths,
-      areasForImprovement: object.areasForImprovement,
-      finalAssessment: object.finalAssessment,
+      interviewId,
+      userId,
+      totalScore: analysis.preparedness_score || geminiFeedback.totalScore,
+      preparednessScore: analysis.preparedness_score,
+      categoryScores: geminiFeedback.categoryScores,
+      strengths: analysis.strengths || geminiFeedback.strengths,
+      areasForImprovement: analysis.improvement_areas || geminiFeedback.areasForImprovement,
+      finalAssessment: geminiFeedback.finalAssessment,
+      technicalKeywordUsage: analysis.technical_keyword_usage,
+      fillerWordRatio: analysis.filler_word_ratio,
       createdAt: new Date().toISOString(),
     };
 
-    let feedbackRef;
-
-    if (feedbackId) {
-      feedbackRef = db.collection("feedback").doc(feedbackId);
-    } else {
-      feedbackRef = db.collection("feedback").doc();
-    }
+    const feedbackRef = feedbackId
+      ? db.collection("feedback").doc(feedbackId)
+      : db.collection("feedback").doc();
 
     await feedbackRef.set(feedback);
 

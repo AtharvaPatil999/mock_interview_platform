@@ -28,6 +28,7 @@ const Agent = ({
   feedbackId,
   type,
   questions,
+  duration = 25,
 }: AgentProps) => {
   const router = useRouter();
   const [callStatus, setCallStatus] = useState<CallStatus>(CallStatus.INACTIVE);
@@ -35,6 +36,30 @@ const Agent = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [lastMessage, setLastMessage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [isFinished, setIsFinished] = useState(false);
+
+  // Timer Effect
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (callStatus === CallStatus.ACTIVE && timeLeft !== null && timeLeft > 0) {
+      timer = setInterval(() => {
+        setTimeLeft((prev) => (prev !== null ? prev - 1 : null));
+      }, 1000);
+    } else if (timeLeft === 0 && callStatus === CallStatus.ACTIVE) {
+      handleDisconnect();
+    }
+
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [callStatus, timeLeft]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
 
   useEffect(() => {
     const onCallStart = () => {
@@ -154,6 +179,8 @@ const Agent = ({
 
   const handleCall = async () => {
     setCallStatus(CallStatus.CONNECTING);
+    const durationInSeconds = duration * 60;
+    setTimeLeft(durationInSeconds);
 
     if (type === "generate") {
       await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
@@ -164,7 +191,7 @@ const Agent = ({
       });
     } else {
       let formattedQuestions = "";
-      if (questions) {
+      if (questions && questions.length > 0) {
         formattedQuestions = questions
           .map((question) => `- ${question}`)
           .join("\n");
@@ -172,13 +199,14 @@ const Agent = ({
 
       await vapi.start(interviewer, {
         variableValues: {
-          questions: formattedQuestions,
+          questions: formattedQuestions || "Ask general software engineering questions.",
         },
       });
     }
   };
 
   const handleDisconnect = () => {
+    if (callStatus === CallStatus.FINISHED) return;
     setCallStatus(CallStatus.FINISHED);
     vapi.stop();
   };
@@ -241,7 +269,13 @@ const Agent = ({
         </div>
       )}
 
-      <div className="w-full flex justify-center">
+      <div className="w-full flex flex-col items-center gap-4">
+        {timeLeft !== null && callStatus === "ACTIVE" && (
+          <div className="bg-dark-300 px-4 py-2 rounded-full text-primary font-mono text-xl border border-primary/20">
+            {formatTime(timeLeft)}
+          </div>
+        )}
+
         {callStatus !== "ACTIVE" ? (
           <button className="relative btn-call" onClick={() => handleCall()}>
             <span

@@ -10,6 +10,7 @@ interface Feedback {
   strengths: string[];
   areasForImprovement: string[];
   finalAssessment: string;
+  preparednessScore?: number;
   createdAt: string;
 }
 
@@ -23,6 +24,9 @@ interface Interview {
   userId: string;
   type: string;
   finalized: boolean;
+  duration?: number;
+  difficulty?: string;
+  sourceType?: "resume" | "role";
 }
 
 interface CreateFeedbackParams {
@@ -54,6 +58,7 @@ interface AgentProps {
   feedbackId?: string;
   type: "generate" | "interview";
   questions?: string[];
+  duration?: number;
 }
 
 interface RouteParams {

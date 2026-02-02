@@ -41,7 +41,15 @@ export const getTechLogos = async (techArray: string[]) => {
   return results;
 };
 
-export const getRandomInterviewCover = () => {
-  const randomIndex = Math.floor(Math.random() * interviewCovers.length);
-  return `/covers${interviewCovers[randomIndex]}`;
+export const getInterviewCover = (id?: string) => {
+  if (!id) return `/covers${interviewCovers[0]}`;
+
+  // Deterministic selection based on ID
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  }
+
+  const index = Math.abs(hash) % interviewCovers.length;
+  return `/covers${interviewCovers[index]}`;
 };
