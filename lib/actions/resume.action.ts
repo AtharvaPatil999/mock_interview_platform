@@ -5,6 +5,7 @@ import { google } from "@ai-sdk/google";
 import { generateText, generateObject } from "ai";
 import { z } from "zod";
 import { db } from "@/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 export async function processResumeAction(binaryData: Uint8Array | Buffer, userId: string) {
     try {
@@ -13,27 +14,55 @@ export async function processResumeAction(binaryData: Uint8Array | Buffer, userI
         const data = await pdfParser(fileBuffer);
         const text = data.text;
 
-        const { text: summary } = await generateText({
-            model: google("gemini-2.0-flash-001"),
-            prompt: `Summarize the following resume text focusing on skills, experience, and projects. Keep it concise.
-      
-      Resume Text:
-      ${text}`,
-        });
+        let summary = "Resume processing completed.";
+        let extractedSkills: string[] = [];
 
-        // Store the extracted text and summary in Firestore
+        try {
+            const { text: aiSummary } = await generateText({
+                model: google("gemini-2.0-flash-001"),
+                prompt: `Summarize the following resume text focusing on skills, experience, and projects. Keep it concise.
+          
+          Resume Text:
+          ${text}`,
+            });
+            summary = aiSummary;
+        } catch (error) {
+            console.error("Summary generation failed:", error);
+            summary = text.substring(0, 500) + "..."; // Fallback to first 500 chars
+        }
+
+        try {
+            const { object: skillsObject } = await generateObject({
+                model: google("gemini-2.0-flash"),
+                schema: z.object({
+                    skills: z.array(z.string()),
+                }),
+                prompt: `Extract a list of technical and soft skills from the following resume text.
+          
+          Resume Text:
+          ${text}`,
+            });
+            extractedSkills = skillsObject.skills;
+        } catch (error) {
+            console.error("Skill extraction failed:", error);
+            extractedSkills = ["General Skills"]; // Basic fallback
+        }
+
+        // Store the extracted text and summary in Firestore using userId as document ID
         await db.collection("resumes").doc(userId).set({
             userId,
             extractedText: text,
             summary: summary,
+            extractedSkills,
             status: "processed",
-            updatedAt: new Date().toISOString()
+            updatedAt: FieldValue.serverTimestamp()
         });
 
         return {
             success: true,
             extractedText: text,
-            summary: summary
+            summary: summary,
+            extractedSkills
         };
     } catch (error) {
         console.error("Error processing resume:", error);
@@ -52,26 +81,38 @@ export async function createResumeInterview(params: {
     try {
         const { userId, role, summary, extractedText, duration, difficulty } = params;
 
-        const { object: questionsObject } = await generateObject({
-            model: google("gemini-2.0-flash"),
-            schema: z.object({
-                questions: z.array(z.string()).length(5),
-            }),
-            prompt: `You are a technical interviewer for the role of ${role}.
-      Based ONLY on the candidate's resume (summary and text provided below), generate exactly 5 specific interview questions.
-      
-      Resume Summary: ${summary}
-      Extracted Text: ${extractedText}
-      
-      Difficulty: ${difficulty}
-      
-      Constraints:
-      - Questions MUST be derived from the candidate's actual projects, skills, or experience mentioned in the resume.
-      - DO NOT ask questions about technologies or roles NOT present in the resume.
-      - Ensure the questions match the requested difficulty: ${difficulty}.`,
-        });
+        let questions: string[] = [];
 
-        const questions = questionsObject.questions;
+        try {
+            const { object: questionsObject } = await generateObject({
+                model: google("gemini-2.0-flash"),
+                schema: z.object({
+                    questions: z.array(z.string()).length(5),
+                }),
+                prompt: `You are a technical interviewer for the role of ${role}.
+          Based ONLY on the candidate's resume (summary and text provided below), generate exactly 5 specific interview questions.
+          
+          Resume Summary: ${summary}
+          Extracted Text: ${extractedText}
+          
+          Difficulty: ${difficulty}
+          
+          Constraints:
+          - Questions MUST be derived from the candidate's actual projects, skills, or experience mentioned in the resume.
+          - DO NOT ask questions about technologies or roles NOT present in the resume.
+          - Ensure the questions match the requested difficulty: ${difficulty}.`,
+            });
+            questions = questionsObject.questions;
+        } catch (aiError) {
+            console.error("Resume question generation failed:", aiError);
+            questions = [
+                "Can you walk me through one of the key projects mentioned in your resume?",
+                "Based on your experience, how do you approach learning new technologies?",
+                "What was the most challenging technical problem you solved in your recent role?",
+                "How do you ensure the quality and maintainability of the code you write?",
+                "Can you discuss a time you had to collaborate with a team to deliver a project?"
+            ];
+        }
 
         const interviewData = {
             userId,

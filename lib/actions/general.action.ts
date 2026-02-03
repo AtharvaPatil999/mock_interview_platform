@@ -5,6 +5,7 @@ import { google } from "@ai-sdk/google";
 
 import { db } from "@/firebase/admin";
 import { feedbackSchema } from "@/constants";
+import { z } from "zod";
 
 export async function createFeedback(params: CreateFeedbackParams) {
   const { interviewId, userId, transcript, feedbackId } = params;
@@ -73,6 +74,69 @@ export async function createFeedback(params: CreateFeedbackParams) {
   } catch (error) {
     console.error("Error saving feedback:", error);
     return { success: false };
+  }
+}
+
+export async function createRoleInterview(params: {
+  userId: string;
+  role: string;
+  duration: number;
+  difficulty: string;
+}) {
+  try {
+    const { userId, role, duration, difficulty } = params;
+
+    let questions: string[] = [];
+
+    try {
+      const { object: questionsObject } = await generateObject({
+        model: google("gemini-2.0-flash"),
+        schema: z.object({
+          questions: z.array(z.string()).length(5),
+        }),
+        prompt: `You are a technical interviewer for the role of ${role}.
+        Generate exactly 5 specific interview questions for this role at a ${difficulty} difficulty level.
+        
+        Constraints:
+        - Questions MUST be technical and specific to ${role}.
+        - Match the difficulty level: ${difficulty}.
+        - DO NOT ask generic questions like "Tell me about yourself" or "What are your strengths".
+        - DO NOT ask unrelated questions like DSA if it's not core to the role (unless the role is specifically for DSA/Leetcoding).
+        - Focus on core concepts, advanced topics, and practical scenarios for ${role}.`,
+      });
+      questions = questionsObject.questions;
+    } catch (aiError: any) {
+      console.error("Gemini API Error (likely quota):", aiError);
+      // Fallback questions if AI fails
+      questions = [
+        `What are the core technical concepts every ${role} should master?`,
+        `Can you describe a challenging project you worked on as a ${role} and how you overcame technical hurdles?`,
+        `How do you stay updated with the latest trends and best practices in ${role} development?`,
+        `Explain a complex technical problem you solved recently.`,
+        `What are your favorite tools and frameworks for ${role} and why?`
+      ];
+    }
+
+    const interviewData = {
+      userId,
+      role,
+      level: difficulty,
+      questions,
+      techstack: [role.split(" ")[0]], // Basic techstack from role
+      createdAt: new Date().toISOString(),
+      type: "Role-based",
+      finalized: false,
+      duration,
+      difficulty,
+      sourceType: "role",
+    };
+
+    const docRef = await db.collection("interviews").add(interviewData);
+
+    return { success: true, interviewId: docRef.id, isFallback: questions.length > 0 && !questions[0].toLowerCase().includes(role.toLowerCase()) };
+  } catch (error) {
+    console.error("Error creating role interview:", error);
+    return { success: false, error: "Failed to create interview session" };
   }
 }
 

@@ -49,13 +49,25 @@ async function Home() {
       {/* CTA SECTION */}
       <section className="card-cta">
         <div className="flex flex-col gap-6 max-w-lg">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-3xl font-bold text-primary">Welcome, {user?.name || "User"}</h1>
+            <p className="text-gray-400">{user?.email}</p>
+          </div>
+
           <h2>
             Get Interview-Ready with AI-Powered Practice & Feedback via PrepWise
           </h2>
 
-          <p className="text-lg">
-            Practice real interview questions & get instant feedback
-          </p>
+          <div className="flex flex-col gap-1">
+            <p className="text-lg">
+              Practice real interview questions & get instant feedback
+            </p>
+            <div className="flex items-center gap-2 text-sm text-primary font-medium">
+              <span className="bg-primary/10 px-3 py-1 rounded-full border border-primary/20">
+                Total Interviews Attempted: {safeUserInterviews.length}
+              </span>
+            </div>
+          </div>
 
           <Button asChild className="btn-primary max-sm:w-full">
             <Link href="/interview">Browse All Categories</Link>

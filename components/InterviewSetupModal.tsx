@@ -6,8 +6,7 @@ import Modal from "./Modal";
 import { Clock, BarChart3, ChevronRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { createResumeInterview } from "@/lib/actions/resume.action";
-import { db } from "@/firebase/client"; // Use client db for simple creation or actions
-import { collection, addDoc } from "firebase/firestore";
+import { createRoleInterview } from "@/lib/actions/general.action";
 
 interface InterviewSetupModalProps {
     isOpen: boolean;
@@ -56,27 +55,22 @@ const InterviewSetupModal = ({
                 if (result.success && result.interviewId) {
                     router.push(`/interview/${result.interviewId}`);
                 } else {
-                    toast.error("Failed to create interview");
+                    toast.error((result as any).error || "Failed to create interview");
                 }
             } else {
-                // Role-based interview creation
-                // For simplicity, we can just create it here or via action
-                const interviewData = {
+                // Role-based interview creation using server action
+                const result = await createRoleInterview({
                     userId,
                     role,
-                    level: difficulty,
-                    questions: [], // Will be generated dynamically in session
-                    techstack: [role.split(" ")[0]], // Basic techstack from role
-                    createdAt: new Date().toISOString(),
-                    type: "Role-based",
-                    finalized: false,
                     duration,
                     difficulty,
-                    sourceType: "role",
-                };
+                });
 
-                const docRef = await addDoc(collection(db, "interviews"), interviewData);
-                router.push(`/interview/${docRef.id}`);
+                if (result.success && result.interviewId) {
+                    router.push(`/interview/${result.interviewId}`);
+                } else {
+                    toast.error("Failed to create interview");
+                }
             }
         } catch (error) {
             console.error("Setup error:", error);
@@ -114,8 +108,8 @@ const InterviewSetupModal = ({
                                 key={d}
                                 onClick={() => setDuration(d)}
                                 className={`py-3 rounded-xl border transition-all ${duration === d
-                                        ? "bg-primary/10 border-primary text-primary"
-                                        : "bg-dark-100 border-dark-300 text-gray-400 hover:border-gray-500"
+                                    ? "bg-primary/10 border-primary text-primary"
+                                    : "bg-dark-100 border-dark-300 text-gray-400 hover:border-gray-500"
                                     }`}
                             >
                                 {d} Min
@@ -135,8 +129,8 @@ const InterviewSetupModal = ({
                                 key={lvl}
                                 onClick={() => setDifficulty(lvl)}
                                 className={`py-3 rounded-xl border transition-all ${difficulty === lvl
-                                        ? "bg-primary/10 border-primary text-primary"
-                                        : "bg-dark-100 border-dark-300 text-gray-400 hover:border-gray-500"
+                                    ? "bg-primary/10 border-primary text-primary"
+                                    : "bg-dark-100 border-dark-300 text-gray-400 hover:border-gray-500"
                                     }`}
                             >
                                 {lvl}
