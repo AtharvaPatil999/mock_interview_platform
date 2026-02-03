@@ -12,6 +12,7 @@ import {
   getInterviewsByUserId,
   getLatestInterviews,
 } from "@/lib/actions/general.action";
+import { getResumeByUserId } from "@/lib/actions/resume.action";
 
 import { dummyInterviews } from "@/constants";
 
@@ -27,6 +28,9 @@ async function Home() {
         getInterviewsByUserId(user.id) || [],
         getLatestInterviews({ userId: user.id }) || [],
       ]);
+
+  const resumeResponse = user ? await getResumeByUserId(user.id) : null;
+  const initialResumeData = resumeResponse?.success ? resumeResponse.data : null;
 
   const safeUserInterviews = userInterviews || [];
   const safeAllInterview = allInterview || [];
@@ -75,7 +79,7 @@ async function Home() {
             <FileText className="text-primary" size={24} />
             <h2 className="text-2xl font-bold">Resume Based</h2>
           </div>
-          <ResumeUpload userId={user?.id || ""} />
+          <ResumeUpload userId={user?.id || ""} initialData={initialResumeData} />
         </div>
 
         {/* Role Based Grid */}

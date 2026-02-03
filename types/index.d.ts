@@ -32,7 +32,7 @@ interface Interview {
 interface CreateFeedbackParams {
   interviewId: string;
   userId: string;
-  transcript: { role: string; content: string }[];
+  transcript: { role: string; content: string; timestamp: number }[];
   feedbackId?: string;
 }
 

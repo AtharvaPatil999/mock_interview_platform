@@ -13,6 +13,8 @@ export const metadata: Metadata = {
   description: "An AI-Powered  Platform for Preparing for Mock Interviews",
 };
 
+import { Toaster } from "sonner";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -24,6 +26,7 @@ export default function RootLayout({
         className={`${monaSans.className} antialiased`}
       >
         {children}
+        <Toaster richColors position="top-center" />
       </body>
     </html>
   );

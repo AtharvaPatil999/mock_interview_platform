@@ -46,8 +46,12 @@ export async function createFeedback(params: CreateFeedbackParams) {
       totalScore: analysis.preparedness_score || geminiFeedback.totalScore,
       preparednessScore: analysis.preparedness_score,
       categoryScores: geminiFeedback.categoryScores,
-      strengths: analysis.strengths || geminiFeedback.strengths,
-      areasForImprovement: analysis.improvement_areas || geminiFeedback.areasForImprovement,
+      strengths: analysis.strengths && analysis.strengths.length > 0 ? analysis.strengths : geminiFeedback.strengths,
+      areasForImprovement: [
+        ...(analysis.weaknesses || []),
+        ...(analysis.improvement_areas || []),
+        ...(analysis.weaknesses?.length || analysis.improvement_areas?.length ? [] : geminiFeedback.areasForImprovement)
+      ].slice(0, 5), // Keep it concise
       finalAssessment: geminiFeedback.finalAssessment,
       technicalKeywordUsage: analysis.technical_keyword_usage,
       fillerWordRatio: analysis.filler_word_ratio,
@@ -59,6 +63,11 @@ export async function createFeedback(params: CreateFeedbackParams) {
       : db.collection("feedback").doc();
 
     await feedbackRef.set(feedback);
+
+    // 3. Mark interview as finalized
+    await db.collection("interviews").doc(interviewId).update({
+      finalized: true
+    });
 
     return { success: true, feedbackId: feedbackRef.id };
   } catch (error) {

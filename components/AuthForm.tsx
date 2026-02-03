@@ -12,7 +12,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  deleteUser,
 } from "firebase/auth";
+import { useState, useEffect } from "react";
 
 import { Form } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,12 @@ const authFormSchema = (type: FormType) => {
 const AuthForm = ({ type }: { type: FormType }) => {
   const router = useRouter();
 
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const formSchema = authFormSchema(type);
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -41,31 +49,49 @@ const AuthForm = ({ type }: { type: FormType }) => {
     },
   });
 
+  if (!isMounted) return null;
+
   const onSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
       if (type === "sign-up") {
         const { name, email, password } = data;
 
-        const userCredential = await createUserWithEmailAndPassword(
-          auth,
-          email,
-          password
-        );
-
-        const result = await signUp({
-          uid: userCredential.user.uid,
-          name: name!,
-          email,
-          password,
-        });
-
-        if (!result.success) {
-          toast.error(result.message);
+        let userCredential;
+        try {
+          userCredential = await createUserWithEmailAndPassword(
+            auth,
+            email,
+            password
+          );
+        } catch (firebaseError: any) {
+          if (firebaseError.code === "auth/email-already-in-use") {
+            toast.error("This email is already in use. Please sign in.");
+          } else {
+            toast.error(firebaseError.message || "Failed to create account.");
+          }
           return;
         }
 
-        toast.success("Account created successfully. Please sign in.");
-        router.push("/sign-in");
+        try {
+          const result = await signUp({
+            uid: userCredential.user.uid,
+            name: name!,
+            email,
+            password,
+          });
+
+          if (!result.success) {
+            await deleteUser(userCredential.user);
+            toast.error(result.message);
+            return;
+          }
+
+          toast.success("Account created successfully. Please sign in.");
+          router.push("/sign-in");
+        } catch (dbError: any) {
+          await deleteUser(userCredential.user);
+          toast.error("Failed to save user data. Please try again.");
+        }
       } else {
         const { email, password } = data;
 
@@ -81,17 +107,22 @@ const AuthForm = ({ type }: { type: FormType }) => {
           return;
         }
 
-        await signIn({
+        const result = await signIn({
           email,
           idToken,
         });
 
+        if (!result.success) {
+          toast.error(result.message);
+          return;
+        }
+
         toast.success("Signed in successfully.");
         router.push("/");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.log(error);
-      toast.error(`There was an error: ${error}`);
+      toast.error(error.message || "An unexpected error occurred.");
     }
   };
 

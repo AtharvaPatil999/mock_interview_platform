@@ -19,6 +19,7 @@ enum CallStatus {
 interface SavedMessage {
   role: "user" | "system" | "assistant";
   content: string;
+  timestamp: number;
 }
 
 const Agent = ({
@@ -73,7 +74,11 @@ const Agent = ({
 
     const onMessage = (message: Message) => {
       if (message.type === "transcript" && message.transcriptType === "final") {
-        const newMessage = { role: message.role, content: message.transcript };
+        const newMessage: SavedMessage = {
+          role: message.role as any,
+          content: message.transcript,
+          timestamp: Date.now()
+        };
         setMessages((prev) => [...prev, newMessage]);
       }
     };

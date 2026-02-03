@@ -8,13 +8,16 @@ import { processResumeAction } from "@/lib/actions/resume.action";
 import { toast } from "sonner";
 import InterviewSetupModal from "./InterviewSetupModal";
 
-const ResumeUpload = ({ userId }: { userId: string }) => {
+const ResumeUpload = ({ userId, initialData }: { userId: string, initialData?: any }) => {
     const [file, setFile] = useState<File | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     const [resumeData, setResumeData] = useState<{
-        text: string;
+        extractedText: string;
         summary: string;
-    } | null>(null);
+    } | null>(initialData ? {
+        extractedText: initialData.extractedText,
+        summary: initialData.summary
+    } : null);
     const [isSetupOpen, setIsSetupOpen] = useState(false);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -40,13 +43,13 @@ const ResumeUpload = ({ userId }: { userId: string }) => {
 
             // 2. Process File (Extract Text & Summarize)
             const arrayBuffer = await file.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
+            const binaryData = new Uint8Array(arrayBuffer);
 
-            const result = await processResumeAction(buffer, userId);
+            const result = await processResumeAction(binaryData, userId);
 
             if (result.success) {
                 setResumeData({
-                    text: result.extractedText!,
+                    extractedText: result.extractedText!,
                     summary: result.summary!,
                 });
                 toast.success("Resume processed successfully!");
@@ -79,6 +82,14 @@ const ResumeUpload = ({ userId }: { userId: string }) => {
                             {(file.size / 1024 / 1024).toFixed(2)} MB
                         </p>
                     </div>
+                ) : resumeData ? (
+                    <div className="flex flex-col items-center gap-2 text-center">
+                        <CheckCircle2 className="text-primary size-12" />
+                        <p className="font-medium text-primary">Resume Ready</p>
+                        <p className="text-sm text-gray-400">
+                            Click below to start your personalized interview
+                        </p>
+                    </div>
                 ) : (
                     <div className="flex flex-col items-center gap-2 text-center">
                         <Upload className="text-gray-400 size-12" />
@@ -91,8 +102,8 @@ const ResumeUpload = ({ userId }: { userId: string }) => {
             </div>
 
             <button
-                onClick={handleUpload}
-                disabled={!file || isUploading}
+                onClick={resumeData ? () => setIsSetupOpen(true) : handleUpload}
+                disabled={(!file && !resumeData) || isUploading}
                 className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
                 {isUploading ? (
@@ -101,10 +112,7 @@ const ResumeUpload = ({ userId }: { userId: string }) => {
                         Processing...
                     </>
                 ) : resumeData ? (
-                    <>
-                        <CheckCircle2 className="size-4" />
-                        Resume Ready
-                    </>
+                    "Start Interview"
                 ) : (
                     "Process Resume"
                 )}
@@ -116,7 +124,10 @@ const ResumeUpload = ({ userId }: { userId: string }) => {
                     onClose={() => setIsSetupOpen(false)}
                     type="resume"
                     userId={userId}
-                    resumeData={resumeData}
+                    resumeData={{
+                        text: resumeData.extractedText,
+                        summary: resumeData.summary
+                    }}
                 />
             )}
         </div>

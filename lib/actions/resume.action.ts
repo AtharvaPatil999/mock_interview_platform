@@ -2,11 +2,13 @@
 
 import * as pdf from "pdf-parse";
 import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
+import { generateText, generateObject } from "ai";
+import { z } from "zod";
 import { db } from "@/firebase/admin";
 
-export async function processResumeAction(fileBuffer: Buffer, userId: string) {
+export async function processResumeAction(binaryData: Uint8Array | Buffer, userId: string) {
     try {
+        const fileBuffer = Buffer.from(binaryData);
         const pdfParser = (pdf as any).default || pdf;
         const data = await pdfParser(fileBuffer);
         const text = data.text;
@@ -19,8 +21,14 @@ export async function processResumeAction(fileBuffer: Buffer, userId: string) {
       ${text}`,
         });
 
-        // We can also store the extracted text in Firestore if needed
-        // But for now, we'll return it to the client to be used in interview setup
+        // Store the extracted text and summary in Firestore
+        await db.collection("resumes").doc(userId).set({
+            userId,
+            extractedText: text,
+            summary: summary,
+            status: "processed",
+            updatedAt: new Date().toISOString()
+        });
 
         return {
             success: true,
@@ -44,22 +52,26 @@ export async function createResumeInterview(params: {
     try {
         const { userId, role, summary, extractedText, duration, difficulty } = params;
 
-        const { text: questionsText } = await generateText({
-            model: google("gemini-1.5-pro-late-20241031"),
-            prompt: `Generate 5 interview questions based on the candidate's resume and the role ${role}.
+        const { object: questionsObject } = await generateObject({
+            model: google("gemini-2.0-flash"),
+            schema: z.object({
+                questions: z.array(z.string()).length(5),
+            }),
+            prompt: `You are a technical interviewer for the role of ${role}.
+      Based ONLY on the candidate's resume (summary and text provided below), generate exactly 5 specific interview questions.
       
       Resume Summary: ${summary}
       Extracted Text: ${extractedText}
       
       Difficulty: ${difficulty}
       
-      Format: Return only the questions as a numbered list.`,
+      Constraints:
+      - Questions MUST be derived from the candidate's actual projects, skills, or experience mentioned in the resume.
+      - DO NOT ask questions about technologies or roles NOT present in the resume.
+      - Ensure the questions match the requested difficulty: ${difficulty}.`,
         });
 
-        const questions = questionsText
-            .split("\n")
-            .filter((line) => line.trim().match(/^\d+\./))
-            .map((line) => line.replace(/^\d+\.\s*/, "").trim());
+        const questions = questionsObject.questions;
 
         const interviewData = {
             userId,
@@ -81,6 +93,19 @@ export async function createResumeInterview(params: {
         return { success: true, interviewId: docRef.id };
     } catch (error) {
         console.error("Error creating resume interview:", error);
+        return { success: false };
+    }
+}
+
+export async function getResumeByUserId(userId: string) {
+    try {
+        const doc = await db.collection("resumes").doc(userId).get();
+        if (doc.exists) {
+            return { success: true, data: doc.data() };
+        }
+        return { success: false };
+    } catch (error) {
+        console.error("Error getting resume:", error);
         return { success: false };
     }
 }

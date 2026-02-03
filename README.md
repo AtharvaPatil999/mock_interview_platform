@@ -14,7 +14,24 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Running the ML Service
+
+The platform uses an XGBoost-based feedback engine. To start it:
+
+1. Install Python dependencies:
+   ```bash
+   pip install -r backend/ml_service/requirements.txt
+   ```
+
+2. Run the FastAPI server:
+   ```bash
+   python backend/ml_service/main.py
+   ```
+
+3. Start the Next.js development server:
+   ```bash
+   npm run dev
+   ```
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
