@@ -4,6 +4,7 @@ import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
 
 import { db } from "@/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { feedbackSchema } from "@/constants";
 import { z } from "zod";
 
@@ -56,7 +57,7 @@ export async function createFeedback(params: CreateFeedbackParams) {
       finalAssessment: geminiFeedback.finalAssessment,
       technicalKeywordUsage: analysis.technical_keyword_usage,
       fillerWordRatio: analysis.filler_word_ratio,
-      createdAt: new Date().toISOString(),
+      createdAt: FieldValue.serverTimestamp(),
     };
 
     const feedbackRef = feedbackId
@@ -123,7 +124,7 @@ export async function createRoleInterview(params: {
       level: difficulty,
       questions,
       techstack: [role.split(" ")[0]], // Basic techstack from role
-      createdAt: new Date().toISOString(),
+      createdAt: FieldValue.serverTimestamp(),
       type: "Role-based",
       finalized: false,
       duration,
@@ -175,25 +176,33 @@ export async function getLatestInterviews(
     .where("finalized", "==", true)
     .get();
 
-  // Filter out current user's interviews in memory
+  // Filter for current user's interviews
   const filteredDocs = interviews.docs.filter(
-    (doc) => doc.data().userId !== userId
+    (doc) => doc.data().userId === userId
   );
 
   // Sort in memory by createdAt (newest first)
   const sortedDocs = filteredDocs.sort((a, b) => {
-    const aDate = new Date(a.data().createdAt || 0);
-    const bDate = new Date(b.data().createdAt || 0);
+    const aData = a.data();
+    const bData = b.data();
+    const aDate = aData.createdAt?.toDate ? aData.createdAt.toDate() : new Date(aData.createdAt || 0);
+    const bDate = bData.createdAt?.toDate ? bData.createdAt.toDate() : new Date(bData.createdAt || 0);
     return bDate.getTime() - aDate.getTime();
   });
 
   // Apply limit after sorting
   const limitedDocs = sortedDocs.slice(0, limit);
 
-  return limitedDocs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-  })) as Interview[];
+  return limitedDocs.map((doc) => {
+    const data = doc.data();
+    if (data.createdAt?.toDate) {
+      data.createdAt = data.createdAt.toDate().toISOString();
+    }
+    return {
+      id: doc.id,
+      ...data,
+    };
+  }) as Interview[];
 }
 
 export async function getInterviewsByUserId(
@@ -206,13 +215,21 @@ export async function getInterviewsByUserId(
 
   // Sort in memory to avoid composite index requirement
   const sortedDocs = interviews.docs.sort((a, b) => {
-    const aDate = new Date(a.data().createdAt || 0);
-    const bDate = new Date(b.data().createdAt || 0);
+    const aData = a.data();
+    const bData = b.data();
+    const aDate = aData.createdAt?.toDate ? aData.createdAt.toDate() : new Date(aData.createdAt || 0);
+    const bDate = bData.createdAt?.toDate ? bData.createdAt.toDate() : new Date(bData.createdAt || 0);
     return bDate.getTime() - aDate.getTime();
   });
 
-  return sortedDocs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-  })) as Interview[];
+  return sortedDocs.map((doc) => {
+    const data = doc.data();
+    if (data.createdAt?.toDate) {
+      data.createdAt = data.createdAt.toDate().toISOString();
+    }
+    return {
+      id: doc.id,
+      ...data,
+    };
+  }) as Interview[];
 }

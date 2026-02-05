@@ -15,6 +15,8 @@ const InterviewCard = async ({
   type,
   techstack,
   createdAt,
+  difficulty,
+  duration,
 }: InterviewCardProps) => {
   const feedback =
     userId && interviewId
@@ -79,6 +81,20 @@ const InterviewCard = async ({
               <Image src="/star.svg" width={22} height={22} alt="star" />
               <p>{feedback?.totalScore || "---"}/100</p>
             </div>
+          </div>
+
+          {/* Difficulty & Duration */}
+          <div className="flex flex-row gap-5 mt-2 text-sm text-gray-400">
+            {difficulty && (
+              <div className="flex items-center gap-1">
+                <span className="font-semibold text-primary/80">Level:</span> {difficulty}
+              </div>
+            )}
+            {duration && (
+              <div className="flex items-center gap-1">
+                <span className="font-semibold text-primary/80">Time:</span> {duration}m
+              </div>
+            )}
           </div>
 
           {/* Feedback or Placeholder Text */}

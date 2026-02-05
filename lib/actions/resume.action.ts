@@ -1,18 +1,28 @@
 "use server";
 
-import * as pdf from "pdf-parse";
+import { revalidatePath } from "next/cache";
 import { google } from "@ai-sdk/google";
 import { generateText, generateObject } from "ai";
 import { z } from "zod";
 import { db } from "@/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 
-export async function processResumeAction(binaryData: Uint8Array | Buffer, userId: string) {
+export async function processResumeAction(extractedText: string, userId: string) {
     try {
-        const fileBuffer = Buffer.from(binaryData);
-        const pdfParser = (pdf as any).default || pdf;
-        const data = await pdfParser(fileBuffer);
-        const text = data.text;
+        console.log(`Starting resume processing for user: ${userId}`);
+
+        const text = extractedText;
+
+        // 1. Mark as processing in Firestore immediately
+        try {
+            await db.collection("resumes").doc(userId).set({
+                userId,
+                status: "processing",
+                updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+        } catch (dbError) {
+            console.error("Failed to update status to 'processing' in Firestore:", dbError);
+        }
 
         let summary = "Resume processing completed.";
         let extractedSkills: string[] = [];
@@ -28,7 +38,7 @@ export async function processResumeAction(binaryData: Uint8Array | Buffer, userI
             summary = aiSummary;
         } catch (error) {
             console.error("Summary generation failed:", error);
-            summary = text.substring(0, 500) + "..."; // Fallback to first 500 chars
+            summary = text.substring(0, 500) + "..."; // Fallback
         }
 
         try {
@@ -48,15 +58,21 @@ export async function processResumeAction(binaryData: Uint8Array | Buffer, userI
             extractedSkills = ["General Skills"]; // Basic fallback
         }
 
-        // Store the extracted text and summary in Firestore using userId as document ID
-        await db.collection("resumes").doc(userId).set({
-            userId,
-            extractedText: text,
-            summary: summary,
-            extractedSkills,
-            status: "processed",
-            updatedAt: FieldValue.serverTimestamp()
-        });
+        // Store the final extracted info in Firestore
+        try {
+            await db.collection("resumes").doc(userId).set({
+                userId,
+                rawText: text, // As per prompt requirement
+                summary: summary,
+                extractedSkills,
+                status: "processed",
+                updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+        } catch (dbError) {
+            console.error("Failed to update status to 'processed' in Firestore:", dbError);
+        }
+
+        revalidatePath("/");
 
         return {
             success: true,
@@ -120,7 +136,7 @@ export async function createResumeInterview(params: {
             level: difficulty,
             questions,
             techstack: [], // Could extract this too
-            createdAt: new Date().toISOString(),
+            createdAt: FieldValue.serverTimestamp(),
             type: "Resume-based",
             finalized: false,
             duration,
@@ -142,7 +158,12 @@ export async function getResumeByUserId(userId: string) {
     try {
         const doc = await db.collection("resumes").doc(userId).get();
         if (doc.exists) {
-            return { success: true, data: doc.data() };
+            const data = doc.data();
+            // Sanitize for serialization
+            if (data?.updatedAt?.toDate) {
+                data.updatedAt = data.updatedAt.toDate().toISOString();
+            }
+            return { success: true, data };
         }
         return { success: false };
     } catch (error) {

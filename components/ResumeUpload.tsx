@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { Upload, FileText, Loader2, CheckCircle2 } from "lucide-react";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage, db } from "@/firebase/client";
+import { db } from "@/firebase/client";
 import { doc, onSnapshot } from "firebase/firestore";
 import { processResumeAction } from "@/lib/actions/resume.action";
 import { toast } from "sonner";
@@ -19,7 +18,7 @@ const ResumeUpload = ({ userId, initialData }: { userId: string, initialData?: a
         summary: string;
         status: string;
     } | null>(initialData ? {
-        extractedText: initialData.extractedText,
+        extractedText: initialData.rawText || initialData.extractedText, // Handle both schemas
         summary: initialData.summary,
         status: initialData.status
     } : null);
@@ -32,7 +31,7 @@ const ResumeUpload = ({ userId, initialData }: { userId: string, initialData?: a
             if (doc.exists()) {
                 const data = doc.data();
                 setResumeData({
-                    extractedText: data.extractedText,
+                    extractedText: data.rawText || data.extractedText,
                     summary: data.summary,
                     status: data.status
                 });
@@ -44,8 +43,11 @@ const ResumeUpload = ({ userId, initialData }: { userId: string, initialData?: a
                 setResumeData(null);
             }
         }, (error) => {
-            // Silencing this as it's a known environment permission issue
-            // console.error("Snapshot error:", error); 
+            if (error.code === "permission-denied") {
+                console.log("Firestore sync: Permission denied (doc may not exist yet or auth pending)");
+                return;
+            }
+            console.error("Firestore onSnapshot error:", error);
         });
 
         return () => unsubscribe();
@@ -62,25 +64,41 @@ const ResumeUpload = ({ userId, initialData }: { userId: string, initialData?: a
         }
     };
 
+    const extractTextFromPDF = async (file: File): Promise<string> => {
+        const pdfjs = await import("pdfjs-dist");
+        // @ts-ignore
+        pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+        let text = "";
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            const strings = content.items.map((item: any) => item.str);
+            text += strings.join(" ") + "\n";
+        }
+
+        return text;
+    };
+
     const handleUpload = async () => {
         if (!file || !userId) return;
 
         setIsUploading(true);
         setIsProcessing(true);
         try {
-            // 1. Upload to Firebase Storage
-            const storageRef = ref(storage, `resumes/${userId}/${Date.now()}_${file.name}`);
-            await uploadBytes(storageRef, file);
-            const downloadURL = await getDownloadURL(storageRef);
+            // 1. Extract Text on Client (No Storage needed)
+            const extractedText = await extractTextFromPDF(file);
 
-            // 2. Process File (Extract Text & Summarize)
-            const arrayBuffer = await file.arrayBuffer();
-            const binaryData = new Uint8Array(arrayBuffer);
-
-            const result = await processResumeAction(binaryData, userId);
+            // 2. Process via Server Action
+            const result = await processResumeAction(extractedText, userId);
+            console.log("Resume processing result:", result.success);
 
             if (!result.success) {
                 toast.error(result.error || "Failed to process resume");
+                setIsProcessing(false);
             } else {
                 if ((result as any).isFallback) {
                     toast.info("Resume processed with default settings (AI limit reached).");
@@ -94,11 +112,13 @@ const ResumeUpload = ({ userId, initialData }: { userId: string, initialData?: a
                     summary: result.summary!,
                     status: "processed"
                 });
+
+                setIsProcessing(false);
                 setIsSetupOpen(true); // Automatically open modal on success
             }
         } catch (error) {
-            console.error("Upload error:", error);
-            toast.error("Error uploading resume");
+            console.error("Upload/Processing error:", error);
+            toast.error("Error processing resume");
         } finally {
             setIsUploading(false);
             setIsProcessing(false);

@@ -19,15 +19,12 @@ import { dummyInterviews } from "@/constants";
 async function Home() {
   const user = await getCurrentUser();
 
-  const isDev = process.env.NODE_ENV === "development";
-
-  const [userInterviews, allInterview] =
-    isDev || !user
-      ? [dummyInterviews, dummyInterviews]
-      : await Promise.all([
-        getInterviewsByUserId(user.id) || [],
-        getLatestInterviews({ userId: user.id }) || [],
-      ]);
+  const [userInterviews, allInterview] = user
+    ? await Promise.all([
+      getInterviewsByUserId(user.id) || [],
+      getLatestInterviews({ userId: user.id }) || [],
+    ])
+    : [[], []];
 
   const resumeResponse = user ? await getResumeByUserId(user.id) : null;
   const initialResumeData = resumeResponse?.success ? resumeResponse.data : null;
@@ -131,6 +128,8 @@ async function Home() {
                 type={interview.type}
                 techstack={interview.techstack}
                 createdAt={interview.createdAt}
+                difficulty={interview.difficulty || interview.level}
+                duration={interview.duration}
               />
             ))
           ) : (
