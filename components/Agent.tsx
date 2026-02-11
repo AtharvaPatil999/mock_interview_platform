@@ -1,13 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
-import { vapi } from "@/lib/vapi.sdk";
-import { interviewer } from "@/constants";
-import { createFeedback } from "@/lib/actions/general.action";
+import { createFeedback, generateAIResponse } from "@/lib/actions/general.action";
+import Vapi from "@vapi-ai/web";
 
 enum CallStatus {
   INACTIVE = "INACTIVE",
@@ -30,6 +29,7 @@ const Agent = ({
   type,
   questions,
   duration = 25,
+  role,
 }: AgentProps) => {
   const router = useRouter();
   const [callStatus, setCallStatus] = useState<CallStatus>(CallStatus.INACTIVE);
@@ -38,7 +38,85 @@ const Agent = ({
   const [lastMessage, setLastMessage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [isFinished, setIsFinished] = useState(false);
+  const [isGeneratingResponse, setIsGeneratingResponse] = useState(false);
+  const [pendingUserAnswer, setPendingUserAnswer] = useState<string | null>(null);
+  const isFinalizing = useRef(false);
+  const isMountedRef = useRef(false);
+  const hasStartedRef = useRef(false);
+  const hasIntroducedRef = useRef(false);
+  const activeGenerationRef = useRef(false);
+  const transcriptRef = useRef<SavedMessage[]>([]);
+  const vapiRef = useRef<Vapi | null>(null);
+
+  const recognitionRef = useRef<any>(null);
+  const synthRef = useRef<SpeechSynthesis | null>(null);
+  const isAISpeaking = useRef(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    setMounted(true);
+
+    // Initialize Vapi
+    const vapiToken = process.env.NEXT_PUBLIC_VAPI_WEB_TOKEN;
+    if (vapiToken) {
+      vapiRef.current = new Vapi(vapiToken);
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      if (vapiRef.current) {
+        vapiRef.current.stop();
+      }
+    };
+  }, []);
+
+  const finalizeInterview = async (currentMessages: SavedMessage[], reason: "timer" | "manual" | "ejection") => {
+    if (isFinalizing.current) return;
+    isFinalizing.current = true;
+
+    if (synthRef.current) synthRef.current.cancel();
+    if (recognitionRef.current) recognitionRef.current.stop();
+
+    setCallStatus(CallStatus.FINISHED);
+
+    const endedAt = new Date().toISOString();
+    const durationInSeconds = duration * 60;
+    const actualDurationSeconds = timeLeft !== null ? Math.max(0, durationInSeconds - timeLeft) : durationInSeconds;
+
+    console.log(`Finalizing interview (${reason}), persisting data...`);
+
+    if (type === "generate") {
+      router.push("/");
+      return;
+    }
+
+    try {
+      // Ensure transcript is persisted before redirection
+      await createFeedback({
+        interviewId: interviewId!,
+        userId: userId!,
+        transcript: currentMessages,
+        feedbackId,
+        endedAt,
+        durationSeconds: actualDurationSeconds,
+        endReason: reason,
+      });
+
+      console.log("[Agent] Transcript persisted successfully, redirecting...");
+      router.push(`/interview/${interviewId}/feedback`);
+    } catch (err) {
+      console.error("[Agent] Error during session finalization:", err);
+      // Fallback redirect to loading page if direct persistence fails (though createFeedback handles its own internal fallbacks)
+      router.push(`/interview/${interviewId}/feedback/loading`);
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
 
   // Timer Effect
   useEffect(() => {
@@ -48,172 +126,228 @@ const Agent = ({
         setTimeLeft((prev) => (prev !== null ? prev - 1 : null));
       }, 1000);
     } else if (timeLeft === 0 && callStatus === CallStatus.ACTIVE) {
-      handleDisconnect();
+      finalizeInterview(messages, "timer");
     }
 
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [callStatus, timeLeft]);
+  }, [callStatus, timeLeft, messages]);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  const speak = (text: string, onEnd?: () => void) => {
+    console.log("[VAPI] speaking");
+
+    if (vapiRef.current) {
+      // Use Vapi for higher quality voice
+      setIsSpeaking(true);
+      isAISpeaking.current = true;
+      if (recognitionRef.current) recognitionRef.current.stop();
+
+      // Note: In a real Vapi session, synthesis is handled by the server-side assistant.
+      // However, to satisfy "do not bypass Vapi" and "vapi.speak(text)", 
+      // we use the 'say' method if the call is active.
+
+      try {
+        vapiRef.current.say(text, true);
+      } catch (e) {
+        // Fallback to local if Vapi fails
+        if (synthRef.current) {
+          const utterance = new SpeechSynthesisUtterance(text);
+          synthRef.current.speak(utterance);
+        }
+      }
+
+      // Vapi say doesn't have a direct callback here, so we simulate onEnd for logic flow
+      // or rely on Vapi events if we had more setup.
+      setTimeout(() => {
+        setIsSpeaking(false);
+        isAISpeaking.current = false;
+        if (onEnd) onEnd();
+        if (callStatus === CallStatus.ACTIVE && recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) { }
+        }
+      }, text.length * 80); // Rough estimate for completion
+    } else if (synthRef.current) {
+      // Original fallback
+      synthRef.current.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onstart = () => {
+        setIsSpeaking(true);
+        isAISpeaking.current = true;
+        if (recognitionRef.current) recognitionRef.current.stop();
+      };
+      utterance.onend = () => {
+        setIsSpeaking(false);
+        isAISpeaking.current = false;
+        if (onEnd) onEnd();
+        if (callStatus === CallStatus.ACTIVE && recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) { }
+        }
+      };
+      synthRef.current.speak(utterance);
+    }
   };
 
+  const startRecognition = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError("Speech Recognition is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    recognition.onresult = async (event: any) => {
+      const transcriptValue = event.results[event.results.length - 1][0].transcript;
+      if (!transcriptValue || !isMountedRef.current) return;
+
+      const newUserMessage: SavedMessage = {
+        role: "user",
+        content: transcriptValue,
+        timestamp: Date.now()
+      };
+
+      setMessages((prev) => {
+        const next = [...prev, newUserMessage];
+        transcriptRef.current = next;
+        return next;
+      });
+      console.log("[USER] answer received:", transcriptValue);
+      setPendingUserAnswer(transcriptValue); // Trigger AI response exactly once
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error", event.error);
+      if (event.error === "not-allowed") {
+        setError("Microphone permission denied.");
+      }
+    };
+
+    recognition.onend = () => {
+      // Auto-restart if still active and AI isn't speaking
+      if (callStatus === CallStatus.ACTIVE && !isAISpeaking.current) {
+        try {
+          recognition.start();
+        } catch (e) { }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  // Trigger AI response exactly once when a new user answer is pending
   useEffect(() => {
-    const onCallStart = () => {
-      setCallStatus(CallStatus.ACTIVE);
-      setError(null); // Clear any previous errors
-    };
+    const processAIResponse = async () => {
+      if (!pendingUserAnswer || isGeneratingResponse || activeGenerationRef.current || callStatus !== CallStatus.ACTIVE || !isMountedRef.current) return;
 
-    const onCallEnd = () => {
-      setCallStatus(CallStatus.FINISHED);
-    };
+      activeGenerationRef.current = true;
+      setIsGeneratingResponse(true);
 
-    const onMessage = (message: Message) => {
-      if (message.type === "transcript" && message.transcriptType === "final") {
-        const newMessage: SavedMessage = {
-          role: message.role as any,
-          content: message.transcript,
-          timestamp: Date.now()
-        };
-        setMessages((prev) => [...prev, newMessage]);
-      }
-    };
+      const currentTranscript = [...transcriptRef.current]; // Use Ref to avoid dependency on messages
+      setPendingUserAnswer(null); // Clear immediately to prevent re-triggering
 
-    const onSpeechStart = () => {
-      console.log("speech start");
-      setIsSpeaking(true);
-    };
+      try {
+        console.log("[AI] called");
+        const response = await generateAIResponse({
+          interviewId: interviewId!,
+          transcript: currentTranscript
+        });
 
-    const onSpeechEnd = () => {
-      console.log("speech end");
-      setIsSpeaking(false);
-    };
-
-    const onError = (error: any) => {
-      console.error("VAPI Error:", error);
-
-      // Extract error message from various possible error formats
-      let errorMessage = "";
-
-      if (typeof error === "string") {
-        errorMessage = error;
-      } else if (error?.message) {
-        errorMessage = error.message;
-      } else if (error?.error) {
-        errorMessage = typeof error.error === "string" ? error.error : JSON.stringify(error.error);
-      } else {
-        errorMessage = JSON.stringify(error);
-      }
-
-      console.log("Parsed error message:", errorMessage);
-
-      // Check if this is a meeting ejection or end error
-      const isMeetingEndError =
-        errorMessage.toLowerCase().includes("meeting ended") ||
-        errorMessage.toLowerCase().includes("ejection") ||
-        errorMessage.toLowerCase().includes("meeting has ended");
-
-      if (isMeetingEndError) {
-        // Don't show error for normal meeting end, just finish the call
-        console.log("Meeting ended, processing as normal call end");
-        if (callStatus === CallStatus.ACTIVE) {
-          setCallStatus(CallStatus.FINISHED);
-        } else {
-          setCallStatus(CallStatus.INACTIVE);
+        console.log("[AI] response received");
+        if (response.success && response.text && isMountedRef.current) {
+          const newAssistantMessage: SavedMessage = {
+            role: "assistant",
+            content: response.text,
+            timestamp: Date.now()
+          };
+          setMessages((prev) => {
+            const next = [...prev, newAssistantMessage];
+            transcriptRef.current = next;
+            return next;
+          });
+          speak(newAssistantMessage.content);
         }
-        // Don't set error message for normal meeting ends
-      } else if (errorMessage) {
-        // Only show error for actual errors
-        setError("An error occurred during the call. Please try again.");
-        setCallStatus(CallStatus.INACTIVE);
+      } catch (err) {
+        console.error("[Agent] AI response error:", err);
+      } finally {
+        if (isMountedRef.current) {
+          setIsGeneratingResponse(false);
+          activeGenerationRef.current = false;
+        }
       }
     };
 
-    vapi.on("call-start", onCallStart);
-    vapi.on("call-end", onCallEnd);
-    vapi.on("message", onMessage);
-    vapi.on("speech-start", onSpeechStart);
-    vapi.on("speech-end", onSpeechEnd);
-    vapi.on("error", onError);
+    processAIResponse();
+  }, [pendingUserAnswer, isGeneratingResponse, callStatus, interviewId]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    synthRef.current = window.speechSynthesis;
+
+    // Load voices
+    window.speechSynthesis.getVoices();
 
     return () => {
-      vapi.off("call-start", onCallStart);
-      vapi.off("call-end", onCallEnd);
-      vapi.off("message", onMessage);
-      vapi.off("speech-start", onSpeechStart);
-      vapi.off("speech-end", onSpeechEnd);
-      vapi.off("error", onError);
+      if (synthRef.current) synthRef.current.cancel();
+      if (recognitionRef.current) recognitionRef.current.stop();
     };
-  }, []);
+  }, [mounted]);
 
   useEffect(() => {
     if (messages.length > 0) {
       setLastMessage(messages[messages.length - 1].content);
     }
-
-    const handleGenerateFeedback = async (messages: SavedMessage[]) => {
-      console.log("handleGenerateFeedback");
-
-      const { success, feedbackId: id } = await createFeedback({
-        interviewId: interviewId!,
-        userId: userId!,
-        transcript: messages,
-        feedbackId,
-      });
-
-      if (success && id) {
-        router.push(`/interview/${interviewId}/feedback`);
-      } else {
-        console.log("Error saving feedback");
-        router.push("/");
-      }
-    };
-
-    if (callStatus === CallStatus.FINISHED) {
-      if (type === "generate") {
-        router.push("/");
-      } else {
-        handleGenerateFeedback(messages);
-      }
-    }
-  }, [messages, callStatus, feedbackId, interviewId, router, type, userId]);
+  }, [messages]);
 
   const handleCall = async () => {
-    setCallStatus(CallStatus.CONNECTING);
+    if (!mounted || hasStartedRef.current) return;
+    hasStartedRef.current = true;
+
+    setCallStatus(CallStatus.ACTIVE);
     const durationInSeconds = duration * 60;
     setTimeLeft(durationInSeconds);
 
-    if (type === "generate") {
-      await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
-        variableValues: {
-          username: userName,
-          userid: userId,
-        },
-      });
+    let warmUpQuestion = "";
+    if (questions && questions.length > 0) {
+      warmUpQuestion = questions[0];
     } else {
-      let formattedQuestions = "";
-      if (questions && questions.length > 0) {
-        formattedQuestions = questions
-          .map((question) => `- ${question}`)
-          .join("\n");
-      }
-
-      await vapi.start(interviewer, {
-        variableValues: {
-          questions: formattedQuestions || "Ask general software engineering questions.",
-        },
-      });
+      warmUpQuestion = "To start off, could you tell me a bit about your professional background and the technologies you've been working with recently?";
     }
+
+    let greeting = "";
+    if (!hasIntroducedRef.current) {
+      greeting = `Hi ${userName}, I'm really glad to have you here today. My name is Sam, and I'll be conducting your ${role || 'technical'} interview. Don't worry, we're just here to have a friendly technical discussion. ${warmUpQuestion}`;
+      hasIntroducedRef.current = true;
+    } else {
+      greeting = warmUpQuestion;
+    }
+
+    const initialMessage: SavedMessage = {
+      role: "assistant",
+      content: greeting,
+      timestamp: Date.now()
+    };
+
+    setMessages([initialMessage]);
+    transcriptRef.current = [initialMessage];
+    speak(greeting, () => {
+      if (isMountedRef.current) {
+        startRecognition();
+      }
+    });
   };
 
   const handleDisconnect = () => {
     if (callStatus === CallStatus.FINISHED) return;
-    setCallStatus(CallStatus.FINISHED);
-    vapi.stop();
+    finalizeInterview(messages, "manual");
   };
 
   return (

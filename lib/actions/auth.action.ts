@@ -1,8 +1,9 @@
 "use server";
 
-import { auth, db } from "@/firebase/admin";
+import { db, auth } from "@/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { cookies } from "next/headers";
+import { serializeFirestore } from "../utils";
 
 // Session duration (1 week)
 const SESSION_DURATION = 60 * 60 * 24 * 7;
@@ -42,7 +43,7 @@ export async function signUp(params: SignUpParams) {
     await db.collection("users").doc(uid).set({
       name,
       email,
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt: new Date().toISOString(),
     });
 
     return {
@@ -118,10 +119,10 @@ export async function getCurrentUser(): Promise<User | null> {
       .get();
     if (!userRecord.exists) return null;
 
-    return {
+    return serializeFirestore({
       ...userRecord.data(),
       id: userRecord.id,
-    } as User;
+    }) as User;
   } catch (error) {
     console.log(error);
 

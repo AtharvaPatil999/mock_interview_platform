@@ -1,3 +1,5 @@
+"use client";
+
 import dayjs from "dayjs";
 import Link from "next/link";
 import Image from "next/image";
@@ -6,9 +8,8 @@ import { Button } from "./ui/button";
 import DisplayTechIcons from "./DisplayTechIcons";
 
 import { cn, getInterviewCover } from "@/lib/utils";
-import { getFeedbackByInterviewId } from "@/lib/actions/general.action";
 
-const InterviewCard = async ({
+const InterviewCard = ({
   interviewId,
   userId,
   role,
@@ -17,15 +18,8 @@ const InterviewCard = async ({
   createdAt,
   difficulty,
   duration,
+  feedback,
 }: InterviewCardProps) => {
-  const feedback =
-    userId && interviewId
-      ? await getFeedbackByInterviewId({
-        interviewId,
-        userId,
-      })
-      : null;
-
   const normalizedType = /mix/gi.test(type) ? "Mixed" : type;
 
   const badgeColor =
@@ -40,8 +34,8 @@ const InterviewCard = async ({
   );
 
   return (
-    <div className="card-border w-[360px] max-sm:w-full min-h-96">
-      <div className="card-interview">
+    <div className="card-border w-[360px] max-sm:w-full min-h-96 text-white">
+      <div className="card-interview relative">
         <div>
           {/* Type Badge */}
           <div
@@ -67,19 +61,19 @@ const InterviewCard = async ({
 
           {/* Date & Score */}
           <div className="flex flex-row gap-5 mt-3">
-            <div className="flex flex-row gap-2">
+            <div className="flex flex-row gap-2 text-white/70">
               <Image
                 src="/calendar.svg"
                 width={22}
                 height={22}
                 alt="calendar"
               />
-              <p>{formattedDate}</p>
+              <p suppressHydrationWarning>{formattedDate}</p>
             </div>
 
-            <div className="flex flex-row gap-2 items-center">
+            <div className="flex flex-row gap-2 items-center text-white/70">
               <Image src="/star.svg" width={22} height={22} alt="star" />
-              <p>{feedback?.totalScore || "---"}/100</p>
+              <p>{feedback?.totalScore !== undefined ? `${feedback.totalScore}/100` : "---/100"}</p>
             </div>
           </div>
 
@@ -98,16 +92,16 @@ const InterviewCard = async ({
           </div>
 
           {/* Feedback or Placeholder Text */}
-          <p className="line-clamp-2 mt-5">
+          <p className="line-clamp-2 mt-5 text-gray-300">
             {feedback?.finalAssessment ||
               "You haven't taken this interview yet. Take it now to improve your skills."}
           </p>
         </div>
 
-        <div className="flex flex-row justify-between">
+        <div className="flex flex-row justify-between mt-auto pt-4">
           <DisplayTechIcons techStack={techstack} />
 
-          <Button className="btn-primary">
+          <Button asChild className="btn-primary">
             <Link
               href={
                 feedback

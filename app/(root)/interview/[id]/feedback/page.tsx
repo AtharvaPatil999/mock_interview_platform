@@ -38,8 +38,15 @@ const FeedbackPage = async ({ params }: RouteParams) => {
 
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold capitalize">{interview?.role} Interview Feedback</h1>
-        <p className="text-gray-400">Completed on {new Date(feedback.createdAt).toLocaleDateString()}</p>
+        <p className="text-gray-400" suppressHydrationWarning>Completed on {feedback.endedAt ? new Date(feedback.endedAt).toLocaleDateString() : new Date(feedback.createdAt).toLocaleDateString()}</p>
       </div>
+
+      {feedback.summary && (
+        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-6 italic text-gray-300">
+          <span className="text-primary font-bold not-italic block mb-2 uppercase text-xs tracking-widest">Executive Summary</span>
+          "{feedback.summary}"
+        </div>
+      )}
 
       {/* Score Card */}
       <div className={`p-10 rounded-3xl border flex flex-col items-center gap-4 text-center ${getScoreColor(feedback.totalScore)}`}>
@@ -82,6 +89,27 @@ const FeedbackPage = async ({ params }: RouteParams) => {
         </div>
       </div>
 
+      {/* Recommendations / Next Steps */}
+      {feedback.recommendations && feedback.recommendations.length > 0 && (
+        <div className="bg-dark-400 border border-primary/30 rounded-2xl p-8 shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 blur-3xl rounded-full" />
+          <h3 className="text-2xl font-bold mb-6 flex items-center gap-3">
+            <TrendingUp size={28} className="text-primary" />
+            Clear Next-Step Recommendations
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {feedback.recommendations.map((rec, i) => (
+              <div key={i} className="bg-dark-200/50 backdrop-blur-sm border border-dark-300 p-5 rounded-xl flex gap-4 transition-all hover:border-primary/50 group">
+                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/20 text-primary font-bold text-sm shrink-0 group-hover:bg-primary group-hover:text-white transition-colors">
+                  {i + 1}
+                </div>
+                <p className="text-gray-200 leading-relaxed font-medium">{rec}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Category Scores */}
       <div className="bg-dark-200 border border-dark-300 rounded-2xl p-6">
         <h3 className="text-xl font-bold mb-6">Detailed Assessment</h3>
@@ -104,16 +132,44 @@ const FeedbackPage = async ({ params }: RouteParams) => {
         </div>
       </div>
 
-      {/* Transcript Holder (Placeholder for now) */}
-      <div className="bg-dark-200 border border-dark-300 rounded-2xl p-6">
-        <div className="flex items-center justify-between cursor-pointer group">
-          <div className="flex items-center gap-2">
-            <BookOpen size={20} className="text-primary" />
-            <h3 className="text-lg font-semibold">Interview Transcript</h3>
-          </div>
-          <span className="text-sm text-primary group-hover:underline">View Full Session</span>
+      {/* Transcript Viewer */}
+      <div className="bg-dark-200 border border-dark-300 rounded-2xl p-6 flex flex-col gap-6">
+        <div className="flex items-center gap-2">
+          <BookOpen size={20} className="text-primary" />
+          <h3 className="text-lg font-semibold">Interview Transcript</h3>
         </div>
-        <p className="text-sm text-gray-500 mt-2 italic">The full transcript will be available here soon.</p>
+
+        <div className="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+          {feedback.transcript && feedback.transcript.length > 0 ? (
+            feedback.transcript.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`flex flex-col gap-1 max-w-[85%] ${msg.role === "assistant" || msg.role === "interviewer"
+                  ? "self-start"
+                  : "self-end items-end"
+                  }`}
+              >
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-gray-500">
+                  <span>{msg.role === "assistant" || msg.role === "interviewer" ? "Interviewer" : "You"}</span>
+                  <span>•</span>
+                  <span suppressHydrationWarning>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div
+                  className={`p-3 rounded-2xl text-sm ${msg.role === "assistant" || msg.role === "interviewer"
+                    ? "bg-dark-300 text-gray-200 rounded-tl-none"
+                    : "bg-primary/20 text-primary border border-primary/20 rounded-tr-none"
+                    }`}
+                >
+                  {msg.content}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="py-10 text-center text-gray-500 italic">
+              No transcript data available for this session.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ import { google } from "@ai-sdk/google";
 import { generateText, generateObject } from "ai";
 import { z } from "zod";
 import { db } from "@/firebase/admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { serializeFirestore } from "../utils";
 
 export async function processResumeAction(extractedText: string, userId: string) {
     try {
@@ -18,7 +18,7 @@ export async function processResumeAction(extractedText: string, userId: string)
             await db.collection("resumes").doc(userId).set({
                 userId,
                 status: "processing",
-                updatedAt: FieldValue.serverTimestamp()
+                updatedAt: new Date().toISOString()
             }, { merge: true });
         } catch (dbError) {
             console.error("Failed to update status to 'processing' in Firestore:", dbError);
@@ -66,7 +66,7 @@ export async function processResumeAction(extractedText: string, userId: string)
                 summary: summary,
                 extractedSkills,
                 status: "processed",
-                updatedAt: FieldValue.serverTimestamp()
+                updatedAt: new Date().toISOString()
             }, { merge: true });
         } catch (dbError) {
             console.error("Failed to update status to 'processed' in Firestore:", dbError);
@@ -105,28 +105,31 @@ export async function createResumeInterview(params: {
                 schema: z.object({
                     questions: z.array(z.string()).length(5),
                 }),
-                prompt: `You are a technical interviewer for the role of ${role}.
-          Based ONLY on the candidate's resume (summary and text provided below), generate exactly 5 specific interview questions.
+                prompt: `You are a technical interviewer for a ${role} position.
+          Based on the candidate's resume, generate exactly 5 DEEPLY TECHNICAL, non-generic interview questions.
           
           Resume Summary: ${summary}
           Extracted Text: ${extractedText}
-          
           Difficulty: ${difficulty}
           
-          Constraints:
-          - Questions MUST be derived from the candidate's actual projects, skills, or experience mentioned in the resume.
-          - DO NOT ask questions about technologies or roles NOT present in the resume.
-          - Ensure the questions match the requested difficulty: ${difficulty}.`,
+          STRICT CONSTRAINTS:
+          - NO soft skills: Do not ask about collaboration, learning, or "discuss a time".
+          - NO template phrases like "Walk me through a project...".
+          - FOCUS: Technical architectural choices, implementation details, and engineering trade-offs made in their actual resume projects.
+          - CONTENT: If they used [tech X], ask about the internal workings, performance implications, or scaling challenges of how they specifically applied it.
+          - Ensure questions match the technical level: ${difficulty}.`,
             });
             questions = questionsObject.questions;
         } catch (aiError) {
-            console.error("Resume question generation failed:", aiError);
+            console.error("Resume question generation failed (Gemini 429 or other):", aiError);
+
+            // Meaningful fallbacks even if AI fails
             questions = [
-                "Can you walk me through one of the key projects mentioned in your resume?",
-                "Based on your experience, how do you approach learning new technologies?",
-                "What was the most challenging technical problem you solved in your recent role?",
-                "How do you ensure the quality and maintainability of the code you write?",
-                "Can you discuss a time you had to collaborate with a team to deliver a project?"
+                `Looking at your experience with the technologies mentioned in your resume, how would you optimize the most critical component for high throughput?`,
+                `In your projects, what was the most difficult technical trade-off you had to make when choosing your architecture?`,
+                `How do you handle consistency and data integrity in the specific stack you've worked with most?`,
+                `Explain the internal mechanics of a key library or framework you used – why was it the right choice for that use case?`,
+                `If you were to re-architect your most recent project to handle 100x the current load, which layers would fail first and why?`
             ];
         }
 
@@ -136,7 +139,7 @@ export async function createResumeInterview(params: {
             level: difficulty,
             questions,
             techstack: [], // Could extract this too
-            createdAt: FieldValue.serverTimestamp(),
+            createdAt: new Date().toISOString(),
             type: "Resume-based",
             finalized: false,
             duration,
@@ -158,12 +161,7 @@ export async function getResumeByUserId(userId: string) {
     try {
         const doc = await db.collection("resumes").doc(userId).get();
         if (doc.exists) {
-            const data = doc.data();
-            // Sanitize for serialization
-            if (data?.updatedAt?.toDate) {
-                data.updatedAt = data.updatedAt.toDate().toISOString();
-            }
-            return { success: true, data };
+            return { success: true, data: serializeFirestore(doc.data()) };
         }
         return { success: false };
     } catch (error) {

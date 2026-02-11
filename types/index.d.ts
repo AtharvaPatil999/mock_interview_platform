@@ -1,7 +1,9 @@
 interface Feedback {
   id: string;
   interviewId: string;
+  userId: string;
   totalScore: number;
+  status: "completed" | "processing" | "error";
   categoryScores: Array<{
     name: string;
     score: number;
@@ -9,8 +11,14 @@ interface Feedback {
   }>;
   strengths: string[];
   areasForImprovement: string[];
+  recommendations: string[];
+  summary: string;
   finalAssessment: string;
   preparednessScore?: number;
+  transcript: { role: string; content: string; timestamp: number }[];
+  endedAt: string;
+  durationSeconds: number;
+  endReason: "manual" | "timer" | "ejection";
   createdAt: string;
 }
 
@@ -34,6 +42,9 @@ interface CreateFeedbackParams {
   userId: string;
   transcript: { role: string; content: string; timestamp: number }[];
   feedbackId?: string;
+  endedAt: string;
+  durationSeconds: number;
+  endReason: "manual" | "timer" | "ejection";
 }
 
 interface User {
@@ -43,14 +54,15 @@ interface User {
 }
 
 interface InterviewCardProps {
-  interviewId?: string;
-  userId?: string;
+  interviewId: string;
+  userId: string;
   role: string;
   type: string;
   techstack: string[];
   createdAt?: string;
   difficulty?: string;
   duration?: number;
+  feedback?: Feedback | null;
 }
 
 interface AgentProps {
@@ -61,6 +73,7 @@ interface AgentProps {
   type: "generate" | "interview";
   questions?: string[];
   duration?: number;
+  role?: string;
 }
 
 interface RouteParams {
@@ -103,4 +116,38 @@ interface InterviewFormProps {
 
 interface TechIconProps {
   techStack: string[];
+}
+
+interface GenerateAIResponseParams {
+  interviewId: string;
+  transcript: { role: string; content: string; timestamp: number }[];
+}
+
+interface Challenge {
+  id: string;
+  title: string;
+  difficulty: "Easy" | "Medium" | "Hard";
+  description: string;
+  examples: Array<{ input: string; output: string }>;
+  constraints: string[];
+  starterCode: Record<string, string>;
+  testCases: Array<{ input: string; output: string }>;
+  tags: string[];
+  estimatedTime?: string;
+  createdAt: string;
+}
+
+interface Submission {
+  id: string;
+  userId: string;
+  challengeId: string;
+  code: string;
+  language: string;
+  result: {
+    passed: number;
+    total: number;
+    output: string;
+    error: string | null;
+  };
+  submittedAt: string;
 }

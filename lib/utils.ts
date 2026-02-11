@@ -53,3 +53,14 @@ export const getInterviewCover = (id?: string) => {
   const index = Math.abs(hash) % interviewCovers.length;
   return `/covers${interviewCovers[index]}`;
 };
+
+export function serializeFirestore(data: any) {
+  return JSON.parse(
+    JSON.stringify(data, (_, value) => {
+      if (value?.toDate) {
+        return value.toDate().toISOString();
+      }
+      return value;
+    })
+  );
+}

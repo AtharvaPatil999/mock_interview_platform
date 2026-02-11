@@ -1,4 +1,4 @@
-import { CreateAssistantDTO } from "@vapi-ai/web/dist/api";
+// Removed Vapi import
 import { z } from "zod";
 
 export const mappings = {
@@ -97,83 +97,21 @@ export const mappings = {
   "aws amplify": "amplify",
 };
 
-export const interviewer: CreateAssistantDTO = {
-  name: "Interviewer",
-  firstMessage:
-    "Hello! Thank you for taking the time to speak with me today. I'm excited to learn more about you and your experience.",
-  transcriber: {
-    provider: "deepgram",
-    model: "nova-2",
-    language: "en",
-  },
-  voice: {
-    provider: "11labs",
-    voiceId: "sarah",
-    stability: 0.4,
-    similarityBoost: 0.8,
-    speed: 0.9,
-    style: 0.5,
-    useSpeakerBoost: true,
-  },
-  model: {
-    provider: "google",
-    model: "gemini-2.0-flash",
-    messages: [
-      {
-        role: "system",
-        content: `You are an expert AI Interviewer. You are conducting a time-based technical interview.
-        
-        Guidelines:
-        - Primary Focus: {{questions}}
-        - Role/Context: Strictly adhere to the role or technologies provided in the context above.
-        - DO NOT ask questions about unrelated programming languages, frameworks, or domains (e.g., if the context is Java, do not ask about Python).
-        - Ask EXACTLY ONE question at a time.
-        - Wait for the candidate to finish their answer before moving to the next question.
-        - Maintain conversation context. Do not repeat the same question.
-        - If the candidate's answer is brief, ask a quick follow-up before moving to a new topic.
-        - The interview is time-limited. If you notice time is running out (near the end of the session), politely wrap up.
-        - Be professional, encouraging, and neutral in your tone.
-        
-        Voice Conversation Rules:
-        - Keep your responses short and conversational.
-        - Avoid long lists or complex formatting in your speech.
-        - Sound natural, like a human interviewer.`,
-      },
-    ],
-  },
-};
+// Interviewer configuration removed as it's now handled by generateAIResponse action.
 
 export const feedbackSchema = z.object({
   totalScore: z.number(),
-  categoryScores: z.tuple([
+  categoryScores: z.array(
     z.object({
-      name: z.literal("Communication Skills"),
+      name: z.string(),
       score: z.number(),
       comment: z.string(),
-    }),
-    z.object({
-      name: z.literal("Technical Knowledge"),
-      score: z.number(),
-      comment: z.string(),
-    }),
-    z.object({
-      name: z.literal("Problem Solving"),
-      score: z.number(),
-      comment: z.string(),
-    }),
-    z.object({
-      name: z.literal("Cultural Fit"),
-      score: z.number(),
-      comment: z.string(),
-    }),
-    z.object({
-      name: z.literal("Confidence and Clarity"),
-      score: z.number(),
-      comment: z.string(),
-    }),
-  ]),
+    })
+  ),
   strengths: z.array(z.string()),
   areasForImprovement: z.array(z.string()),
+  recommendations: z.array(z.string()),
+  summary: z.string(),
   finalAssessment: z.string(),
 });
 

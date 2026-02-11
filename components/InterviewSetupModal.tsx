@@ -102,8 +102,8 @@ const InterviewSetupModal = ({
                     <label className="text-sm font-medium text-gray-400 flex items-center gap-2">
                         <Clock size={16} /> Interview Duration
                     </label>
-                    <div className="grid grid-cols-3 gap-3">
-                        {[25, 45, 60].map((d) => (
+                    <div className="grid grid-cols-4 gap-3">
+                        {[5, 25, 45, 60].map((d) => (
                             <button
                                 key={d}
                                 onClick={() => setDuration(d)}
