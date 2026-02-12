@@ -3,7 +3,7 @@
 import { generateObject, generateText } from "ai";
 import { google } from "@ai-sdk/google";
 
-import { db } from "@/firebase/admin";
+import { db } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { feedbackSchema } from "@/constants";
 import { z } from "zod";
@@ -235,32 +235,7 @@ export async function createRoleInterview(params: {
       questions = questionsObject.questions;
     } catch (aiError: any) {
       console.error("Gemini API Error (likely quota):", aiError);
-
-      // Role-specific meaningful fallbacks
-      const fallbackSets: Record<string, string[]> = {
-        "Java Developer": [
-          "Explain the memory model in JVM and how Garbage Collection works under high pressure.",
-          "How do you handle race conditions when working with distributed caching in a Java environment?",
-          "Walk me through your strategy for profiling and fixing a memory leak in a Spring Boot application.",
-          "Compare Synchronous vs Asynchronous processing in Java – when would you choose WebFlux over Standard MVC?",
-          "How would you implement a robust circuit breaker pattern in a microservices architecture using Java?"
-        ],
-        "Python Developer": [
-          "How does Python's GIL impact multi-threaded performance, and what are the alternatives for CPU-bound tasks?",
-          "Explain the internal mechanics of Python decorators and how they handle scope and closures.",
-          "How would you optimize a Django or FastAPI endpoint that is experiencing high database latency?",
-          "Walk me through the differences between list comprehensions and generators in terms of memory efficiency.",
-          "How do you handle dependency management and environment isolation in a large-scale Python project?"
-        ]
-      };
-
-      questions = fallbackSets[role] || [
-        `What are the technical trade-offs you consider when architecting a system for ${role}?`,
-        `How do you handle state management and consistency in a distributed ${role} application?`,
-        `Describe a scenario where you had to optimize ${role} code for extreme performance – what tools did you use?`,
-        `How do you implement robust security measures and prevent common vulnerabilities in your ${role} stack?`,
-        `Explain how you would handle complex data migrations in a live production environment for a ${role} position.`
-      ];
+      questions = []; // Rely on backend for dynamic question generation
     }
 
     const interviewData = {

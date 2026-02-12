@@ -3,10 +3,9 @@
 import Image from "next/image";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-
 import { cn } from "@/lib/utils";
-import { createFeedback, generateAIResponse } from "@/lib/actions/general.action";
-import Vapi from "@vapi-ai/web";
+import { createFeedback } from "@/lib/actions/general.action";
+import { toast } from "sonner";
 
 enum CallStatus {
   INACTIVE = "INACTIVE",
@@ -21,6 +20,18 @@ interface SavedMessage {
   timestamp: number;
 }
 
+interface AgentProps {
+  userName: string;
+  userId?: string;
+  interviewId?: string;
+  feedbackId?: string;
+  type: "interview" | "generate";
+  questions?: string[];
+  duration?: number;
+  role?: string;
+  difficulty?: string;
+}
+
 const Agent = ({
   userName,
   userId,
@@ -30,6 +41,7 @@ const Agent = ({
   questions,
   duration = 25,
   role,
+  difficulty = "Medium",
 }: AgentProps) => {
   const router = useRouter();
   const [callStatus, setCallStatus] = useState<CallStatus>(CallStatus.INACTIVE);
@@ -40,14 +52,13 @@ const Agent = ({
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [isGeneratingResponse, setIsGeneratingResponse] = useState(false);
   const [pendingUserAnswer, setPendingUserAnswer] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
   const isFinalizing = useRef(false);
   const isMountedRef = useRef(false);
   const hasStartedRef = useRef(false);
-  const hasIntroducedRef = useRef(false);
   const activeGenerationRef = useRef(false);
   const transcriptRef = useRef<SavedMessage[]>([]);
-  const vapiRef = useRef<Vapi | null>(null);
-
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const isAISpeaking = useRef(false);
@@ -56,61 +67,21 @@ const Agent = ({
   useEffect(() => {
     isMountedRef.current = true;
     setMounted(true);
-
-    // Initialize Vapi
-    const vapiToken = process.env.NEXT_PUBLIC_VAPI_WEB_TOKEN;
-    if (vapiToken) {
-      vapiRef.current = new Vapi(vapiToken);
+    if (typeof window !== "undefined") {
+      synthRef.current = window.speechSynthesis;
+      console.log("[AGENT] SpeechSynthesis initialized");
     }
 
     return () => {
       isMountedRef.current = false;
-      if (vapiRef.current) {
-        vapiRef.current.stop();
+      if (synthRef.current) synthRef.current.cancel();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) { }
       }
     };
   }, []);
-
-  const finalizeInterview = async (currentMessages: SavedMessage[], reason: "timer" | "manual" | "ejection") => {
-    if (isFinalizing.current) return;
-    isFinalizing.current = true;
-
-    if (synthRef.current) synthRef.current.cancel();
-    if (recognitionRef.current) recognitionRef.current.stop();
-
-    setCallStatus(CallStatus.FINISHED);
-
-    const endedAt = new Date().toISOString();
-    const durationInSeconds = duration * 60;
-    const actualDurationSeconds = timeLeft !== null ? Math.max(0, durationInSeconds - timeLeft) : durationInSeconds;
-
-    console.log(`Finalizing interview (${reason}), persisting data...`);
-
-    if (type === "generate") {
-      router.push("/");
-      return;
-    }
-
-    try {
-      // Ensure transcript is persisted before redirection
-      await createFeedback({
-        interviewId: interviewId!,
-        userId: userId!,
-        transcript: currentMessages,
-        feedbackId,
-        endedAt,
-        durationSeconds: actualDurationSeconds,
-        endReason: reason,
-      });
-
-      console.log("[Agent] Transcript persisted successfully, redirecting...");
-      router.push(`/interview/${interviewId}/feedback`);
-    } catch (err) {
-      console.error("[Agent] Error during session finalization:", err);
-      // Fallback redirect to loading page if direct persistence fails (though createFeedback handles its own internal fallbacks)
-      router.push(`/interview/${interviewId}/feedback/loading`);
-    }
-  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -118,7 +89,6 @@ const Agent = ({
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Timer Effect
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (callStatus === CallStatus.ACTIVE && timeLeft !== null && timeLeft > 0) {
@@ -134,80 +104,90 @@ const Agent = ({
     };
   }, [callStatus, timeLeft, messages]);
 
-  const speak = (text: string, onEnd?: () => void) => {
-    console.log("[VAPI] speaking");
+  useEffect(() => {
+    if (messages.length > 0) {
+      setLastMessage(messages[messages.length - 1].content);
+    }
+  }, [messages]);
 
-    if (vapiRef.current) {
-      // Use Vapi for higher quality voice
+  const speak = (text: string, onEnd?: () => void) => {
+    console.log("[AGENT] speak requested:", text);
+    if (!synthRef.current) {
+      console.error("[AGENT] SpeechSynthesis not available");
+      return;
+    }
+
+    // Cancel any ongoing speech
+    synthRef.current.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    utterance.onstart = () => {
+      console.log("[AGENT] Speech started");
       setIsSpeaking(true);
       isAISpeaking.current = true;
-      if (recognitionRef.current) recognitionRef.current.stop();
-
-      // Note: In a real Vapi session, synthesis is handled by the server-side assistant.
-      // However, to satisfy "do not bypass Vapi" and "vapi.speak(text)", 
-      // we use the 'say' method if the call is active.
-
-      try {
-        vapiRef.current.say(text, true);
-      } catch (e) {
-        // Fallback to local if Vapi fails
-        if (synthRef.current) {
-          const utterance = new SpeechSynthesisUtterance(text);
-          synthRef.current.speak(utterance);
-        }
+      // Stop recognition while speaking to avoid feedback loops
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) { }
       }
+    };
 
-      // Vapi say doesn't have a direct callback here, so we simulate onEnd for logic flow
-      // or rely on Vapi events if we had more setup.
-      setTimeout(() => {
-        setIsSpeaking(false);
-        isAISpeaking.current = false;
-        if (onEnd) onEnd();
-        if (callStatus === CallStatus.ACTIVE && recognitionRef.current) {
-          try {
-            recognitionRef.current.start();
-          } catch (e) { }
-        }
-      }, text.length * 80); // Rough estimate for completion
-    } else if (synthRef.current) {
-      // Original fallback
-      synthRef.current.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onstart = () => {
-        setIsSpeaking(true);
-        isAISpeaking.current = true;
-        if (recognitionRef.current) recognitionRef.current.stop();
-      };
-      utterance.onend = () => {
-        setIsSpeaking(false);
-        isAISpeaking.current = false;
-        if (onEnd) onEnd();
-        if (callStatus === CallStatus.ACTIVE && recognitionRef.current) {
-          try {
-            recognitionRef.current.start();
-          } catch (e) { }
-        }
-      };
-      synthRef.current.speak(utterance);
-    }
+    utterance.onend = () => {
+      console.log("[AGENT] Speech ended");
+      setIsSpeaking(false);
+      isAISpeaking.current = false;
+      if (onEnd) onEnd();
+
+      // Auto-start recognition after AI finishes speaking
+      if (callStatus === CallStatus.ACTIVE && !isGeneratingResponse) {
+        console.log("[AGENT] Recognition starting after speech end");
+        startRecognition();
+      }
+    };
+
+    utterance.onerror = (event) => {
+      console.error("[AGENT] Speech error:", event);
+      setIsSpeaking(false);
+      isAISpeaking.current = false;
+    };
+
+    synthRef.current.speak(utterance);
   };
 
   const startRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
+      console.error("[AGENT] SpeechRecognition not supported");
       setError("Speech Recognition is not supported in this browser. Please use Chrome or Edge.");
       return;
     }
 
+    // Clean up previous instance
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) { }
+    }
+
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = false; // Turn-based: stop after one final result
     recognition.interimResults = false;
     recognition.lang = "en-US";
 
-    recognition.onresult = async (event: any) => {
+    recognition.onstart = () => {
+      console.log("[AGENT] Recognition started - Listening...");
+    };
+
+    recognition.onresult = (event: any) => {
       const transcriptValue = event.results[event.results.length - 1][0].transcript;
       if (!transcriptValue || !isMountedRef.current) return;
 
+      console.log("[AGENT] Transcript captured:", transcriptValue);
       const newUserMessage: SavedMessage = {
         role: "user",
         content: transcriptValue,
@@ -219,53 +199,55 @@ const Agent = ({
         transcriptRef.current = next;
         return next;
       });
-      console.log("[USER] answer received:", transcriptValue);
-      setPendingUserAnswer(transcriptValue); // Trigger AI response exactly once
+      setPendingUserAnswer(transcriptValue);
     };
 
     recognition.onerror = (event: any) => {
-      console.error("Speech recognition error", event.error);
-      if (event.error === "not-allowed") {
-        setError("Microphone permission denied.");
+      console.warn("[AGENT] Recognition error:", event.error);
+      if (event.error === "no-speech" && callStatus === CallStatus.ACTIVE && !isAISpeaking.current) {
+        // Restart if no speech was detected
+        setTimeout(() => startRecognition(), 100);
       }
     };
 
     recognition.onend = () => {
-      // Auto-restart if still active and AI isn't speaking
-      if (callStatus === CallStatus.ACTIVE && !isAISpeaking.current) {
-        try {
-          recognition.start();
-        } catch (e) { }
-      }
+      console.log("[AGENT] Recognition ended");
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error("[AGENT] Recognition start failed:", e);
+    }
   };
 
-  // Trigger AI response exactly once when a new user answer is pending
+  // Turn-based AI Response Effect
   useEffect(() => {
     const processAIResponse = async () => {
-      if (!pendingUserAnswer || isGeneratingResponse || activeGenerationRef.current || callStatus !== CallStatus.ACTIVE || !isMountedRef.current) return;
+      if (!pendingUserAnswer || isGeneratingResponse || activeGenerationRef.current || callStatus !== CallStatus.ACTIVE || !isMountedRef.current || !sessionId) return;
 
+      console.log("[AGENT] Processing answer for sessionId:", sessionId);
       activeGenerationRef.current = true;
       setIsGeneratingResponse(true);
 
-      const currentTranscript = [...transcriptRef.current]; // Use Ref to avoid dependency on messages
-      setPendingUserAnswer(null); // Clear immediately to prevent re-triggering
+      const capturedAnswer = pendingUserAnswer;
+      setPendingUserAnswer(null);
 
       try {
-        console.log("[AI] called");
-        const response = await generateAIResponse({
-          interviewId: interviewId!,
-          transcript: currentTranscript
+        const res = await fetch("/api/interview/respond", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, userInput: capturedAnswer })
         });
 
-        console.log("[AI] response received");
-        if (response.success && response.text && isMountedRef.current) {
+        const data = await res.json();
+        console.log("[AGENT] Respond API data:", data);
+
+        if (data.message && isMountedRef.current) {
           const newAssistantMessage: SavedMessage = {
             role: "assistant",
-            content: response.text,
+            content: data.message,
             timestamp: Date.now()
           };
           setMessages((prev) => {
@@ -273,10 +255,18 @@ const Agent = ({
             transcriptRef.current = next;
             return next;
           });
-          speak(newAssistantMessage.content);
+
+          if (data.final) {
+            console.log("[AGENT] Session final reached");
+            speak(data.closingMessage || data.message, () => {
+              finalizeInterview(transcriptRef.current, "manual");
+            });
+          } else {
+            speak(data.message);
+          }
         }
       } catch (err) {
-        console.error("[Agent] AI response error:", err);
+        console.error("[AGENT] Respond API error:", err);
       } finally {
         if (isMountedRef.current) {
           setIsGeneratingResponse(false);
@@ -286,63 +276,115 @@ const Agent = ({
     };
 
     processAIResponse();
-  }, [pendingUserAnswer, isGeneratingResponse, callStatus, interviewId]);
-
-  useEffect(() => {
-    if (!mounted) return;
-    synthRef.current = window.speechSynthesis;
-
-    // Load voices
-    window.speechSynthesis.getVoices();
-
-    return () => {
-      if (synthRef.current) synthRef.current.cancel();
-      if (recognitionRef.current) recognitionRef.current.stop();
-    };
-  }, [mounted]);
-
-  useEffect(() => {
-    if (messages.length > 0) {
-      setLastMessage(messages[messages.length - 1].content);
-    }
-  }, [messages]);
+  }, [pendingUserAnswer, isGeneratingResponse, callStatus, sessionId]);
 
   const handleCall = async () => {
     if (!mounted || hasStartedRef.current) return;
-    hasStartedRef.current = true;
+    console.log("[AGENT] handleCall triggered");
 
+    hasStartedRef.current = true;
     setCallStatus(CallStatus.ACTIVE);
+
     const durationInSeconds = duration * 60;
     setTimeLeft(durationInSeconds);
 
-    let warmUpQuestion = "";
-    if (questions && questions.length > 0) {
-      warmUpQuestion = questions[0];
-    } else {
-      warmUpQuestion = "To start off, could you tell me a bit about your professional background and the technologies you've been working with recently?";
-    }
+    const newSessionId = crypto.randomUUID();
+    setSessionId(newSessionId);
+    console.log("[AGENT] New Session ID:", newSessionId);
 
-    let greeting = "";
-    if (!hasIntroducedRef.current) {
-      greeting = `Hi ${userName}, I'm really glad to have you here today. My name is Sam, and I'll be conducting your ${role || 'technical'} interview. Don't worry, we're just here to have a friendly technical discussion. ${warmUpQuestion}`;
-      hasIntroducedRef.current = true;
-    } else {
-      greeting = warmUpQuestion;
-    }
+    try {
+      console.log("[AGENT] Requesting start from backend...");
+      const res = await fetch("/api/interview/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: newSessionId,
+          userName,
+          userId,
+          interviewId,
+          difficulty,
+          duration,
+          role: role || "Technical",
+          questions: [] // Questions are handled server-side now
+        })
+      });
 
-    const initialMessage: SavedMessage = {
-      role: "assistant",
-      content: greeting,
-      timestamp: Date.now()
-    };
+      const data = await res.json();
+      console.log("[AGENT] Start API data:", data);
 
-    setMessages([initialMessage]);
-    transcriptRef.current = [initialMessage];
-    speak(greeting, () => {
-      if (isMountedRef.current) {
-        startRecognition();
+      if (data.error && isMountedRef.current) {
+        toast.error(data.error);
+        setError(data.error);
+        setCallStatus(CallStatus.INACTIVE);
+        hasStartedRef.current = false;
+        return;
       }
-    });
+
+      if (data.message && isMountedRef.current) {
+        const initialMessage: SavedMessage = {
+          role: "assistant",
+          content: data.message,
+          timestamp: Date.now()
+        };
+
+        setMessages([initialMessage]);
+        transcriptRef.current = [initialMessage];
+
+        // Always speak the greeting immediately
+        speak(data.message, () => {
+          console.log("[AGENT] Greeting finished, loop started");
+        });
+      }
+    } catch (err: any) {
+      console.error("[AGENT] Start API error:", err);
+      const msg = "Unable to connect to the interview service. Please ensure the backend is running.";
+      toast.error(msg);
+      setError(msg);
+      setCallStatus(CallStatus.INACTIVE);
+      hasStartedRef.current = false;
+    }
+  };
+
+  const finalizeInterview = async (currentMessages: SavedMessage[], reason: "timer" | "manual" | "ejection") => {
+    if (isFinalizing.current) return;
+    isFinalizing.current = true;
+    console.log("[AGENT] Finalizing interview, reason:", reason);
+
+    if (synthRef.current) synthRef.current.cancel();
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) { }
+    }
+
+    setCallStatus(CallStatus.FINISHED);
+
+    const endedAt = new Date().toISOString();
+    const durationInSeconds = duration * 60;
+    const actualDurationSeconds = timeLeft !== null ? Math.max(0, durationInSeconds - timeLeft) : durationInSeconds;
+
+    if (type === "generate") {
+      router.push("/");
+      return;
+    }
+
+    try {
+      await createFeedback({
+        interviewId: interviewId!,
+        userId: userId!,
+        transcript: currentMessages,
+        feedbackId,
+        endedAt,
+        durationSeconds: actualDurationSeconds,
+        endReason: reason,
+      });
+
+      console.log("[AGENT] Feedback created, redirecting...");
+      router.push(`/interview/${interviewId}/feedback`);
+    } catch (err) {
+      console.error("[AGENT] Feedback creation error:", err);
+      router.push(`/interview/${interviewId}/feedback/loading`);
+    }
   };
 
   const handleDisconnect = () => {
@@ -350,10 +392,11 @@ const Agent = ({
     finalizeInterview(messages, "manual");
   };
 
+  if (!mounted) return null;
+
   return (
     <>
       <div className="call-view">
-        {/* AI Interviewer Card */}
         <div className="card-interviewer">
           <div className="avatar">
             <Image
@@ -368,7 +411,6 @@ const Agent = ({
           <h3>AI Interviewer</h3>
         </div>
 
-        {/* User Profile Card */}
         <div className="card-border">
           <div className="card-content">
             <Image
@@ -399,7 +441,6 @@ const Agent = ({
         </div>
       )}
 
-      {/* Error Message Display */}
       {error && (
         <div className="w-full flex justify-center mb-4">
           <div className="bg-red-500/10 border border-red-500/50 text-red-500 px-6 py-3 rounded-lg max-w-lg text-center">
@@ -409,29 +450,28 @@ const Agent = ({
       )}
 
       <div className="w-full flex flex-col items-center gap-4">
-        {timeLeft !== null && callStatus === "ACTIVE" && (
+        {timeLeft !== null && callStatus === CallStatus.ACTIVE && (
           <div className="bg-dark-300 px-4 py-2 rounded-full text-primary font-mono text-xl border border-primary/20">
             {formatTime(timeLeft)}
           </div>
         )}
 
-        {callStatus !== "ACTIVE" ? (
-          <button className="relative btn-call" onClick={() => handleCall()}>
+        {callStatus !== CallStatus.ACTIVE ? (
+          <button className="relative btn-call" onClick={handleCall}>
             <span
               className={cn(
                 "absolute animate-ping rounded-full opacity-75",
-                callStatus !== "CONNECTING" && "hidden"
+                callStatus === CallStatus.CONNECTING && "bg-primary"
               )}
             />
-
             <span className="relative">
-              {callStatus === "INACTIVE" || callStatus === "FINISHED"
+              {callStatus === CallStatus.INACTIVE || callStatus === CallStatus.FINISHED
                 ? "Call"
                 : ". . ."}
             </span>
           </button>
         ) : (
-          <button className="btn-disconnect" onClick={() => handleDisconnect()}>
+          <button className="btn-disconnect" onClick={handleDisconnect}>
             End
           </button>
         )}

@@ -128,11 +128,24 @@ interface Challenge {
   title: string;
   difficulty: "Easy" | "Medium" | "Hard";
   description: string;
-  examples: Array<{ input: string; output: string }>;
+  examples: Array<{ input: string; output: string; explanation?: string }>;
   constraints: string[];
-  starterCode: Record<string, string>;
-  testCases: Array<{ input: string; output: string }>;
+  starterCode: {
+    javascript: string;
+    python: string;
+  };
+  testCases: {
+    visible: Array<{ input: any; expectedOutput: any }>;
+    hidden: Array<{ input: any; expectedOutput: any }>;
+    edge: Array<{
+      input: any;
+      expectedOutput: any;
+      category: "empty" | "null" | "large_input" | "negative" | "boundary" | "overflow" | "duplicate" | "sorted" | "reverse_sorted";
+    }>;
+  };
   tags: string[];
+  timeLimitMs: number;
+  memoryLimitMB: number;
   estimatedTime?: string;
   createdAt: string;
 }
@@ -143,11 +156,18 @@ interface Submission {
   challengeId: string;
   code: string;
   language: string;
-  result: {
-    passed: number;
-    total: number;
-    output: string;
-    error: string | null;
-  };
+  status: "Accepted" | "Wrong Answer" | "Time Limit Exceeded" | "Runtime Error";
+  passed: number;
+  total: number;
+  executionTimeMs: number;
+  memoryUsedMB: number;
+  details?: Array<{
+    type: "visible" | "hidden" | "edge";
+    category?: string;
+    passed: boolean;
+    expected: any;
+    received: any;
+    error?: string;
+  }>;
   submittedAt: string;
 }

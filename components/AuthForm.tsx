@@ -102,17 +102,22 @@ const AuthForm = ({ type }: { type: FormType }) => {
         );
 
         const idToken = await userCredential.user.getIdToken();
+        console.log("[AUTH_FORM] Received idToken from Firebase Client");
         if (!idToken) {
+          console.error("[AUTH_FORM] Failed to get idToken from userCredential");
           toast.error("Sign in Failed. Please try again.");
           return;
         }
 
+        console.log(`[AUTH_FORM] Calling signIn server action for ${email}...`);
         const result = await signIn({
           email,
           idToken,
         });
+        console.log("[AUTH_FORM] signIn result:", result);
 
         if (!result.success) {
+          console.error("[AUTH_FORM] Server side sign-in failed:", result.message);
           toast.error(result.message);
           return;
         }

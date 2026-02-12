@@ -1,6 +1,6 @@
 "use server";
 
-import { db, auth } from "@/firebase/admin";
+import { db, auth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { cookies } from "next/headers";
 import { serializeFirestore } from "../utils";
@@ -70,27 +70,62 @@ export async function signUp(params: SignUpParams) {
 
 export async function signIn(params: SignInParams) {
   const { email, idToken } = params;
-
   try {
-    const userRecord = await auth.getUserByEmail(email);
-    if (!userRecord)
+    console.log(`[AUTH_ACTION] SignIn attempt - Email: ${email}`);
+
+    if (!idToken) {
+      console.error("[AUTH_ACTION] SignIn Error: Missing idToken");
+      return { success: false, message: "Authentication failed: Missing token." };
+    }
+
+    // Verify the ID token to ensure it's valid and get the UID
+    console.log("[AUTH_ACTION] Verifying ID token...");
+    const decodedToken = await auth.verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+    console.log(`[AUTH_ACTION] Token verified - UID: ${uid}`);
+
+    if (decodedToken.email !== email) {
+      console.warn(`[AUTH_ACTION] Email mismatch: Token(${decodedToken.email}) vs Params(${email})`);
+    }
+
+    // Check if user exists in Firestore
+    console.log(`[AUTH_ACTION] Checking Firestore for UID: ${uid}`);
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) {
+      console.error(`[AUTH_ACTION] Firestore Error: User document not found for UID: ${uid}`);
       return {
         success: false,
-        message: "User does not exist. Create an account.",
+        message: "Account record not found. Please sign up again.",
       };
+    }
 
+    console.log("[AUTH_ACTION] Creating session cookie...");
     await setSessionCookie(idToken);
+    console.log("[AUTH_ACTION] Session cookie set successfully");
 
     return {
       success: true,
       message: "Signed in successfully.",
     };
   } catch (error: any) {
-    console.error("SignIn error:", error);
+    console.error("[AUTH_ACTION] SignIn CRITICAL ERROR:", {
+      code: error.code,
+      message: error.message,
+      stack: error.stack
+    });
+
+    let errorMessage = "Failed to log into account. Please try again.";
+    if (error.code === 'auth/id-token-expired') {
+      errorMessage = "Your session has expired. Please sign in again.";
+    } else if (error.code === 'auth/argument-error') {
+      errorMessage = "Invalid authentication credentials.";
+    } else if (error.code === 'auth/user-disabled') {
+      errorMessage = "This account has been disabled.";
+    }
 
     return {
       success: false,
-      message: "Failed to log into account. Please try again.",
+      message: error.message || errorMessage,
     };
   }
 }
@@ -111,20 +146,31 @@ export async function getCurrentUser(): Promise<User | null> {
 
   try {
     const decodedClaims = await auth.verifySessionCookie(sessionCookie, true);
+    const uid = decodedClaims.uid;
 
     // get user info from db
     const userRecord = await db
       .collection("users")
-      .doc(decodedClaims.uid)
+      .doc(uid)
       .get();
-    if (!userRecord.exists) return null;
+
+    if (!userRecord.exists) {
+      console.warn(`[AUTH_ACTION] getCurrentUser: User document not found for UID: ${uid}`);
+      return null;
+    }
 
     return serializeFirestore({
       ...userRecord.data(),
       id: userRecord.id,
     }) as User;
-  } catch (error) {
-    console.log(error);
+  } catch (error: any) {
+    if (error.code === 'auth/session-cookie-expired') {
+      console.log("[AUTH_ACTION] Session cookie expired");
+    } else if (error.code === 'auth/user-not-found') {
+      console.warn("[AUTH_ACTION] User not found during session verification");
+    } else {
+      console.error("[AUTH_ACTION] Error getting current user:", error.message);
+    }
 
     // Invalid or expired session
     return null;

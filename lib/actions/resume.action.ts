@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { google } from "@ai-sdk/google";
 import { generateText, generateObject } from "ai";
 import { z } from "zod";
-import { db } from "@/firebase/admin";
+import { db } from "@/lib/firebase-admin";
 import { serializeFirestore } from "../utils";
 
 export async function processResumeAction(extractedText: string, userId: string) {
@@ -122,15 +122,7 @@ export async function createResumeInterview(params: {
             questions = questionsObject.questions;
         } catch (aiError) {
             console.error("Resume question generation failed (Gemini 429 or other):", aiError);
-
-            // Meaningful fallbacks even if AI fails
-            questions = [
-                `Looking at your experience with the technologies mentioned in your resume, how would you optimize the most critical component for high throughput?`,
-                `In your projects, what was the most difficult technical trade-off you had to make when choosing your architecture?`,
-                `How do you handle consistency and data integrity in the specific stack you've worked with most?`,
-                `Explain the internal mechanics of a key library or framework you used – why was it the right choice for that use case?`,
-                `If you were to re-architect your most recent project to handle 100x the current load, which layers would fail first and why?`
-            ];
+            questions = []; // Rely on backend for dynamic question generation
         }
 
         const interviewData = {

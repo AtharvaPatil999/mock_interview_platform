@@ -35,7 +35,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
             const data = await getChallengeById(id);
             if (data) {
                 setChallenge(data);
-                setCode(data.starterCode[language] || "");
+                setCode((data.starterCode as any)[language] || "");
             }
             setLoading(false);
         }
@@ -52,16 +52,23 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
     const handleSubmit = async () => {
         if (!user) return;
         setSubmitting(true);
-        const result = await runCode(id, code, language);
+        const result: any = await runCode(id, code, language, true);
         setOutput(result);
 
-        await submitChallengeResult({
-            userId: user.id,
-            challengeId: id,
-            code,
-            language,
-            result
-        });
+        if (!result.error) {
+            await submitChallengeResult({
+                userId: user.id,
+                challengeId: id,
+                code,
+                language,
+                status: result.status,
+                passed: result.passed,
+                total: result.total,
+                executionTimeMs: result.executionTimeMs,
+                memoryUsedMB: result.memoryUsedMB,
+                details: result.details
+            });
+        }
 
         setSubmitting(false);
     };
@@ -97,7 +104,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
                         <h1 className="text-xl font-bold text-white">{challenge.title}</h1>
                         <div className="flex items-center gap-2 text-xs">
                             <span className={`font-bold ${challenge.difficulty === 'Easy' ? 'text-green-500' :
-                                    challenge.difficulty === 'Medium' ? 'text-yellow-500' : 'text-red-500'
+                                challenge.difficulty === 'Medium' ? 'text-yellow-500' : 'text-red-500'
                                 }`}>{challenge.difficulty}</span>
                             <span className="text-gray-500">•</span>
                             <span className="text-gray-400">{challenge.tags.join(", ")}</span>
@@ -226,24 +233,55 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
                                         </div>
                                     ) : (
                                         <>
-                                            <div className={`p-4 rounded-xl border flex items-center justify-between ${output.passed === output.total ? 'bg-green-500/10 border-green-500/20 text-green-500' : 'bg-yellow-500/10 border-yellow-500/20 text-yellow-500'
+                                            <div className={`p-4 rounded-xl border flex flex-col gap-3 ${output.status === "Accepted" ? 'bg-green-500/10 border-green-500/20 text-green-500' : 'bg-red-500/10 border-red-500/20 text-red-400'
                                                 }`}>
-                                                <div className="flex items-center gap-3">
-                                                    {output.passed === output.total ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
-                                                    <div>
-                                                        <p className="font-bold text-lg">{output.passed} / {output.total} Tests Passed</p>
-                                                        <p className="text-xs opacity-70">{output.output}</p>
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        {output.status === "Accepted" ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
+                                                        <div>
+                                                            <p className="font-bold text-lg">{output.status}</p>
+                                                            <p className="text-xs opacity-70">{output.passed} / {output.total} Tests Passed</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-col items-end text-xs font-mono opacity-80">
+                                                        <span>Time: {output.executionTimeMs}ms</span>
+                                                        <span>Memory: {output.memoryUsedMB}MB</span>
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            {output.results && (
+                                            {output.details && (
                                                 <div className="space-y-2 mt-2">
-                                                    {output.results.map((res: any, i: number) => (
-                                                        <div key={i} className="text-xs flex items-center gap-2 p-2 rounded bg-dark-300/50 border border-dark-400/50">
-                                                            {res.passed ? <div className="size-2 rounded-full bg-green-500" /> : <div className="size-2 rounded-full bg-red-500" />}
-                                                            <span className="text-gray-400">Test {i + 1}:</span>
-                                                            <span className={res.passed ? 'text-green-500' : 'text-red-400'}>{res.passed ? 'Passed' : 'Failed'}</span>
+                                                    {output.details.map((res: any, i: number) => (
+                                                        <div key={i} className="group flex flex-col rounded-lg bg-dark-300/50 border border-dark-400/50 overflow-hidden">
+                                                            <div className="flex items-center justify-between p-2 cursor-pointer hover:bg-dark-300/80 transition-colors">
+                                                                <div className="flex items-center gap-2 text-xs">
+                                                                    {res.passed ? <div className="size-2 rounded-full bg-green-500" /> : <div className="size-2 rounded-full bg-red-500" />}
+                                                                    <span className="text-gray-400 font-bold uppercase">{res.type} Case {i + 1}</span>
+                                                                    {res.category && <span className="text-[10px] bg-dark-400 px-1 rounded text-gray-500">{res.category}</span>}
+                                                                </div>
+                                                                <span className={res.passed ? 'text-green-500 text-[10px]' : 'text-red-400 text-[10px]'}>
+                                                                    {res.passed ? 'PASSED' : 'FAILED'}
+                                                                </span>
+                                                            </div>
+                                                            {!res.passed && (
+                                                                <div className="p-3 border-t border-dark-400/50 bg-dark-400/20 space-y-2 font-mono text-[11px]">
+                                                                    {res.error ? (
+                                                                        <p className="text-red-400/80">{res.error}</p>
+                                                                    ) : (
+                                                                        <>
+                                                                            <div>
+                                                                                <span className="text-gray-500 block mb-1">Expected:</span>
+                                                                                <code className="text-green-500/80 bg-dark-500/50 px-2 py-1 rounded block">{JSON.stringify(res.expected)}</code>
+                                                                            </div>
+                                                                            <div>
+                                                                                <span className="text-gray-500 block mb-1">Received:</span>
+                                                                                <code className="text-red-400/80 bg-dark-500/50 px-2 py-1 rounded block">{JSON.stringify(res.received)}</code>
+                                                                            </div>
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     ))}
                                                 </div>
